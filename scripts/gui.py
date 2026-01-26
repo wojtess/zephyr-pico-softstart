@@ -12,18 +12,30 @@ Features:
 - LED ON/OFF toggle with protocol communication
 - Visual status indicators (connection, LED state)
 - Status message area with color coding
+- Thread-safe serial operations
+- Connection health monitoring
 """
 
 import sys
 import glob
 import time
-from typing import List, Optional, Dict, Any
+import threading
+import queue
+import logging
+from typing import List, Optional, Dict
+from dataclasses import dataclass
+from enum import Enum
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 try:
     import serial
 except ImportError:
     print("WARNING: pyserial not installed. Install with: pip install pyserial")
     serial = None
+    logger.error("pyserial not available")
 
 try:
     import dearpygui.dearpygui as dpg
@@ -43,6 +55,38 @@ from protocol import (
 )
 
 
+# ==========================================================================
+# CONSTANTS AND TYPES
+# ==========================================================================
+
+class SerialCommand(Enum):
+    """Serial command types for worker thread."""
+    CONNECT = "connect"
+    DISCONNECT = "disconnect"
+    SEND_LED = "send_led"
+    CHECK_HEALTH = "check_health"
+    QUIT = "quit"
+
+
+@dataclass
+class SerialTask:
+    """Task for serial worker thread."""
+    command: SerialCommand
+    port: Optional[str] = None
+    led_state: Optional[bool] = None
+    result_queue: Optional[queue.Queue] = None
+
+
+@dataclass
+class SerialResult:
+    """Result from serial worker thread."""
+    command: SerialCommand
+    success: bool
+    message: str
+    led_state: Optional[bool] = None
+    error: Optional[str] = None
+
+
 # Tag constants for better resource management
 TAGS = {
     "primary_window": "win_primary",
@@ -56,20 +100,369 @@ TAGS = {
     "last_response": "txt_response",
 }
 
-# Global state
-serial_connection: Optional[serial.Serial] = None
-led_state: bool = False  # Track LED state locally
 
+# ==========================================================================
+# MAIN APPLICATION CLASS
+# ==========================================================================
+
+class LEDControllerApp:
+    """Main LED Controller application with Dear PyGui GUI."""
+
+    def __init__(self):
+        """Initialize the application."""
+        # Thread-safe state
+        self._lock = threading.Lock()
+        self._serial_connection: Optional[serial.Serial] = None
+        self._led_state: bool = False
+        self._is_connected: bool = False
+
+        # Worker thread
+        self._task_queue: queue.Queue = queue.Queue()
+        self._result_queue: queue.Queue = queue.Queue()
+        self._worker_thread: Optional[threading.Thread] = None
+        self._running: bool = False
+
+        # Start worker thread
+        self._start_worker()
+
+    def _start_worker(self) -> None:
+        """Start the serial worker thread."""
+        self._running = True
+        self._worker_thread = threading.Thread(target=self._serial_worker, daemon=True)
+        self._worker_thread.start()
+        logger.info("Serial worker thread started")
+
+    def _serial_worker(self) -> None:
+        """Background thread for all serial operations."""
+        logger.info("Serial worker running")
+
+        while self._running:
+            try:
+                task = self._task_queue.get(timeout=0.1)
+
+                if task.command == SerialCommand.QUIT:
+                    logger.info("Worker received QUIT command")
+                    break
+
+                elif task.command == SerialCommand.CONNECT:
+                    result = self._handle_connect(task.port)
+                    if task.result_queue:
+                        task.result_queue.put(result)
+
+                elif task.command == SerialCommand.DISCONNECT:
+                    result = self._handle_disconnect()
+                    if task.result_queue:
+                        task.result_queue.put(result)
+
+                elif task.command == SerialCommand.SEND_LED:
+                    result = self._handle_send_led(task.led_state)
+                    if task.result_queue:
+                        task.result_queue.put(result)
+
+                elif task.command == SerialCommand.CHECK_HEALTH:
+                    result = self._handle_health_check()
+                    # Health check doesn't need result callback
+
+                self._task_queue.task_done()
+
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"Worker error: {e}", exc_info=True)
+
+        logger.info("Serial worker stopped")
+
+    def _handle_connect(self, port: str) -> SerialResult:
+        """Handle connection in worker thread."""
+        try:
+            with self._lock:
+                if self._serial_connection and self._serial_connection.is_open:
+                    return SerialResult(
+                        SerialCommand.CONNECT,
+                        False,
+                        "Already connected",
+                        error="Already connected"
+                    )
+
+            logger.info(f"Connecting to {port}...")
+            connection = serial.Serial(
+                port=port,
+                baudrate=115200,
+                timeout=1,
+                write_timeout=1
+            )
+
+            # Flush any initial data
+            connection.reset_input_buffer()
+            connection.reset_output_buffer()
+
+            # Wait for device to be ready
+            time.sleep(0.3)
+
+            with self._lock:
+                self._serial_connection = connection
+                self._is_connected = True
+
+            logger.info(f"Connected to {port}")
+            return SerialResult(
+                SerialCommand.CONNECT,
+                True,
+                f"Connected to {port}"
+            )
+
+        except serial.SerialException as e:
+            error_msg = str(e)
+            # Translate to user-friendly message
+            if "Permission denied" in error_msg or "could not open port" in error_msg:
+                user_msg = "Port busy. Close other programs (IDE, terminal) using this device."
+            elif "does not exist" in error_msg or "could not open port" in error_msg:
+                user_msg = "Device not found. Check USB connection."
+            elif "Device or resource busy" in error_msg:
+                user_msg = "Device is busy. Wait a moment and try again."
+            else:
+                user_msg = "Connection failed. Try disconnecting and reconnecting."
+
+            logger.error(f"Connection error: {e}")
+            return SerialResult(
+                SerialCommand.CONNECT,
+                False,
+                user_msg,
+                error=error_msg
+            )
+
+        except Exception as e:
+            logger.error(f"Unexpected connection error: {e}", exc_info=True)
+            return SerialResult(
+                SerialCommand.CONNECT,
+                False,
+                "Unexpected error during connection",
+                error=str(e)
+            )
+
+    def _handle_disconnect(self) -> SerialResult:
+        """Handle disconnection in worker thread."""
+        try:
+            with self._lock:
+                if self._serial_connection:
+                    self._serial_connection.close()
+                    self._serial_connection = None
+                self._is_connected = False
+                self._led_state = False
+
+            logger.info("Disconnected")
+            return SerialResult(
+                SerialCommand.DISCONNECT,
+                True,
+                "Disconnected"
+            )
+
+        except Exception as e:
+            logger.error(f"Disconnect error: {e}", exc_info=True)
+            return SerialResult(
+                SerialCommand.DISCONNECT,
+                False,
+                "Disconnect error",
+                error=str(e)
+            )
+
+    def _handle_send_led(self, state: bool) -> SerialResult:
+        """Handle LED command in worker thread."""
+        try:
+            with self._lock:
+                if not self._serial_connection or not self._serial_connection.is_open:
+                    return SerialResult(
+                        SerialCommand.SEND_LED,
+                        False,
+                        "Not connected",
+                        error="No connection"
+                    )
+
+                # Build and send frame
+                value = 1 if state else 0
+                frame = build_frame(CMD_SET_LED, value)
+
+                self._serial_connection.write(frame)
+                self._serial_connection.flush()
+
+                # Read response (read up to 2 bytes for ACK or NACK+error)
+                resp = self._serial_connection.read(2)
+
+                if not resp:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+                    return SerialResult(
+                        SerialCommand.SEND_LED,
+                        False,
+                        "Device not responding (timeout)",
+                        error="Timeout",
+                        led_state=None
+                    )
+
+                resp_type, err_code = parse_response(resp)
+
+                if resp_type == RESP_ACK:
+                    self._led_state = state
+                    return SerialResult(
+                        SerialCommand.SEND_LED,
+                        True,
+                        f"LED turned {'ON' if state else 'OFF'}",
+                        led_state=state
+                    )
+                else:  # RESP_NACK
+                    error_name = get_error_name(err_code)
+                    logger.warning(f"NACK received: {error_name}")
+                    return SerialResult(
+                        SerialCommand.SEND_LED,
+                        False,
+                        f"Command failed: {error_name}",
+                        error=error_name
+                    )
+
+        except serial.SerialException as e:
+            error_msg = str(e)
+            # Check for disconnection
+            if "device disconnected" in error_msg.lower() or not self._serial_connection.is_open:
+                with self._lock:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+
+                logger.warning("Device disconnected during command")
+                return SerialResult(
+                    SerialCommand.SEND_LED,
+                    False,
+                    "Device disconnected",
+                    error="Disconnected"
+                )
+
+            logger.error(f"Serial error: {e}")
+            return SerialResult(
+                SerialCommand.SEND_LED,
+                False,
+                "Communication error",
+                error=str(e)
+            )
+
+        except Exception as e:
+            logger.error(f"Unexpected error sending LED command: {e}", exc_info=True)
+            return SerialResult(
+                SerialCommand.SEND_LED,
+                False,
+                "Unexpected error",
+                error=str(e)
+            )
+
+    def _handle_health_check(self) -> SerialResult:
+        """Check if connection is still alive."""
+        try:
+            with self._lock:
+                if not self._serial_connection or not self._serial_connection.is_open:
+                    if self._is_connected:
+                        # Connection was lost
+                        logger.warning("Connection lost detected during health check")
+                        self._is_connected = False
+                        self._serial_connection = None
+                        self._led_state = False
+                        return SerialResult(
+                            SerialCommand.CHECK_HEALTH,
+                            False,
+                            "Connection lost",
+                            error="Disconnected"
+                        )
+                    return SerialResult(SerialCommand.CHECK_HEALTH, True, "OK")
+
+            # Try to read DTR line to check connection
+            try:
+                dtr = self._serial_connection.getCD()  # Check Carrier Detect
+                if not dtr:
+                    logger.warning("Carrier Detect lost - device disconnected")
+                    self._is_connected = False
+                    self._serial_connection.close()
+                    self._serial_connection = None
+                    self._led_state = False
+                    return SerialResult(
+                        SerialCommand.CHECK_HEALTH,
+                        False,
+                        "Connection lost",
+                        error="No carrier"
+                    )
+            except:
+                pass  # Not all ports support CD
+
+            return SerialResult(SerialCommand.CHECK_HEALTH, True, "OK")
+
+        except Exception as e:
+            logger.error(f"Health check error: {e}")
+            return SerialResult(
+                SerialCommand.CHECK_HEALTH,
+                False,
+                "Health check failed",
+                error=str(e)
+            )
+
+    def is_connected(self) -> bool:
+        """Check if currently connected."""
+        with self._lock:
+            return self._is_connected and self._serial_connection is not None
+
+    def get_led_state(self) -> bool:
+        """Get current LED state."""
+        with self._lock:
+            return self._led_state
+
+    def send_task(self, task: SerialTask) -> queue.Queue:
+        """Send task to worker thread and return result queue."""
+        result_queue = queue.Queue()
+        task.result_queue = result_queue
+        self._task_queue.put(task)
+        return result_queue
+
+    def check_results(self) -> List[SerialResult]:
+        """Check for completed operations from worker thread."""
+        results = []
+        try:
+            while True:
+                result = self._result_queue.get_nowait()
+                results.append(result)
+        except queue.Empty:
+            pass
+        return results
+
+    def shutdown(self) -> None:
+        """Shutdown the application and worker thread."""
+        logger.info("Shutting down...")
+        self._running = False
+
+        # Send quit command to worker
+        try:
+            self._task_queue.put(SerialTask(command=SerialCommand.QUIT), timeout=1)
+        except:
+            pass
+
+        # Wait for worker to finish
+        if self._worker_thread and self._worker_thread.is_alive():
+            self._worker_thread.join(timeout=2)
+
+        # Close serial connection
+        with self._lock:
+            if self._serial_connection and self._serial_connection.is_open:
+                self._serial_connection.close()
+            self._serial_connection = None
+            self._is_connected = False
+
+        logger.info("Shutdown complete")
+
+
+# ==========================================================================
+# HELPER FUNCTIONS
+# ==========================================================================
 
 def find_ports_with_info() -> List[Dict[str, str]]:
-    """Auto-detect available serial ports with device information.
-
-    Returns:
-        List of dicts with 'device' and 'description' keys
-    """
+    """Auto-detect available serial ports with device information."""
     ports_info = []
 
-    # Linux - get basic info
+    # Linux
     for port in glob.glob("/dev/ttyACM*"):
         ports_info.append({"device": port, "description": "ACM Device"})
     for port in glob.glob("/dev/ttyUSB*"):
@@ -81,7 +474,7 @@ def find_ports_with_info() -> List[Dict[str, str]]:
     for port in glob.glob("/dev/cu.usbserial*"):
         ports_info.append({"device": port, "description": "USB Serial"})
 
-    # Windows - try to get more detailed info
+    # Windows
     try:
         import serial.tools.list_ports
         for port in serial.tools.list_ports.comports():
@@ -96,387 +489,285 @@ def find_ports_with_info() -> List[Dict[str, str]]:
     return ports_info
 
 
-def refresh_port_list() -> List[Dict[str, str]]:
-    """Refresh the list of available serial ports.
-
-    Returns:
-        List of dicts with 'device' and 'description' keys
-    """
-    ports = find_ports_with_info()
-
-    if ports:
-        print(f"Found {len(ports)} port(s): {[p['device'] for p in ports]}")
-    else:
-        print("No serial ports found")
-
-    return ports
-
-
-def update_port_dropdown() -> bool:
-    """Update the port dropdown with current port list.
-
-    Returns:
-        True if ports were found, False otherwise
-    """
-    # Verify widget exists before operations
-    if not dpg.does_item_exist(TAGS["port_combo"]):
-        print(f"WARNING: Port combo widget {TAGS['port_combo']} does not exist")
-        return False
-
-    if not dpg.does_item_exist(TAGS["status_message"]):
-        print(f"WARNING: Status message widget {TAGS['status_message']} does not exist")
-        return False
-
-    ports = refresh_port_list()
-
-    if ports:
-        # Create display list with descriptions
-        display_list = [f"{p['description']} - {p['device']}" for p in ports]
-        dpg.configure_item(TAGS["port_combo"], items=display_list, enabled=True)
-
-        # Auto-select if only one port
-        if len(ports) == 1:
-            dpg.set_value(TAGS["port_combo"], display_list[0])
-            update_status(f"✓ Found 1 device: {ports[0]['device']}", [100, 200, 100])
-        else:
-            update_status(f"✓ Found {len(ports)} devices. Select a port to connect.", [150, 180, 150])
-            dpg.set_value(TAGS["port_combo"], display_list[0])
-
-        return True
-    else:
-        # No ports found - disable combo
-        dpg.configure_item(TAGS["port_combo"], items=["No device detected"], enabled=False)
-        update_status(
-            "⚠ No RP2040 device found. Please:\n"
-            "   • Connect your RP2040 via USB\n"
-            "   • Press the 'Refresh' button\n"
-            "   • Check USB cable connection",
-            [255, 150, 50]
-        )
-        return False
-
-
 def update_status(message: str, color: List[int]) -> None:
-    """Update the status message with text and color.
-
-    Args:
-        message: Status message text
-        color: RGB color list [r, g, b]
-    """
+    """Update the status message with text and color."""
     if dpg.does_item_exist(TAGS["status_message"]):
         dpg.set_value(TAGS["status_message"], message)
         dpg.configure_item(TAGS["status_message"], color=color)
 
 
 def update_connection_indicator(connected: bool) -> None:
-    """Update the connection status indicator.
-
-    Args:
-        connected: True if connected, False otherwise
-    """
+    """Update the connection status indicator."""
     if dpg.does_item_exist(TAGS["conn_indicator"]):
         if connected:
             dpg.configure_item(TAGS["conn_indicator"], color=[100, 255, 100])  # Green
-            dpg.set_value(TAGS["conn_indicator"], "● Connected")
+            dpg.set_value(TAGS["conn_indicator"], "Connected")
         else:
             dpg.configure_item(TAGS["conn_indicator"], color=[150, 150, 150])  # Gray
-            dpg.set_value(TAGS["conn_indicator"], "○ Disconnected")
+            dpg.set_value(TAGS["conn_indicator"], "Disconnected")
 
 
 def update_led_indicator(on: bool) -> None:
-    """Update the LED status indicator.
-
-    Args:
-        on: True if LED is ON, False if OFF
-    """
+    """Update the LED status indicator."""
     if dpg.does_item_exist(TAGS["led_indicator"]):
         if on:
             dpg.configure_item(TAGS["led_indicator"], color=[100, 255, 100])  # Green
-            dpg.set_value(TAGS["led_indicator"], "● LED ON")
+            dpg.set_value(TAGS["led_indicator"], "LED ON")
         else:
             dpg.configure_item(TAGS["led_indicator"], color=[150, 150, 150])  # Gray
-            dpg.set_value(TAGS["led_indicator"], "○ LED OFF")
+            dpg.set_value(TAGS["led_indicator"], "LED OFF")
 
 
 def update_last_response(message: str) -> None:
-    """Update the last response display.
-
-    Args:
-        message: Response message to display
-    """
+    """Update the last response display."""
     if dpg.does_item_exist(TAGS["last_response"]):
-        dpg.set_value(TAGS["last_response"], f"Last response: {message}")
+        dpg.set_value(TAGS["last_response"], f"Last: {message}")
 
 
 def get_selected_port() -> Optional[str]:
-    """Get the currently selected port device path.
-
-    Returns:
-        Port device path (e.g., "/dev/ttyACM0") or None
-    """
+    """Get the currently selected port device path."""
     if not dpg.does_item_exist(TAGS["port_combo"]):
         return None
 
     try:
         selected = dpg.get_value(TAGS["port_combo"])
         if selected and "No device" not in selected:
-            # Extract device path from "Description - /dev/path"
             parts = selected.split(" - ")
             if len(parts) == 2:
                 return parts[1]
     except Exception:
-        pass
+        logger.exception("Error getting selected port")
 
     return None
 
 
-def is_connected() -> bool:
-    """Check if currently connected to a serial port.
+def handle_disconnect_state(app: LEDControllerApp) -> None:
+    """Handle unexpected disconnect - reset UI state."""
+    if dpg.does_item_exist(TAGS["connect_btn"]):
+        dpg.set_item_label(TAGS["connect_btn"], "Connect")
 
-    Returns:
-        True if connected, False otherwise
-    """
-    global serial_connection
-    return serial_connection is not None and serial_connection.is_open
+    if dpg.does_item_exist(TAGS["port_combo"]):
+        dpg.configure_item(TAGS["port_combo"], enabled=True)
 
+    if dpg.does_item_exist(TAGS["refresh_btn"]):
+        dpg.configure_item(TAGS["refresh_btn"], enabled=True)
 
-def send_led_command(state: bool) -> bool:
-    """Send LED control command to device.
+    if dpg.does_item_exist(TAGS["led_btn"]):
+        dpg.configure_item(TAGS["led_btn"], enabled=False)
 
-    Args:
-        state: True to turn LED ON, False to turn OFF
-
-    Returns:
-        True if command succeeded (ACK received), False otherwise
-    """
-    global serial_connection
-
-    if not is_connected():
-        update_status("❌ Not connected!", [255, 100, 100])
-        return False
-
-    value = 1 if state else 0
-    frame = build_frame(CMD_SET_LED, value)
-
-    try:
-        # Send command
-        serial_connection.write(frame)
-        serial_connection.flush()
-
-        # Read response
-        resp = serial_connection.read(1)
-
-        if not resp:
-            update_status("❌ No response from device", [255, 100, 100])
-            update_last_response("Timeout")
-            return False
-
-        resp_type, err_code = parse_response(resp)
-
-        if resp_type == RESP_ACK:
-            update_status(f"✓ LED turned {'ON' if state else 'OFF'}", [100, 200, 100])
-            update_last_response("ACK (0xFF)")
-            return True
-        else:  # RESP_NACK
-            error_name = get_error_name(err_code)
-            update_status(f"❌ Command failed: {error_name}", [255, 100, 100])
-            update_last_response(f"NACK (0x{resp_type:02X}): {error_name}")
-            return False
-
-    except serial.SerialException as e:
-        update_status(f"❌ Serial error: {e}", [255, 100, 100])
-        update_last_response(f"Error: {e}")
-        return False
-
-    except Exception as e:
-        update_status(f"❌ Unexpected error: {e}", [255, 100, 100])
-        update_last_response(f"Error: {e}")
-        return False
+    update_connection_indicator(False)
+    update_led_indicator(False)
 
 
-def on_refresh_clicked(sender, app_data, user_data) -> None:
-    """Callback for refresh button click with visual feedback.
+# ==========================================================================
+# CALLBACKS
+# ==========================================================================
 
-    Args:
-        sender: Button widget ID
-        app_data: Button data (usually None for buttons)
-        user_data: Optional user data passed from button
-    """
-    # Disable button and show feedback
+def on_refresh_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Callback for refresh button click."""
+    # Disable button
     if dpg.does_item_exist(sender):
         dpg.configure_item(sender, enabled=False)
 
-    update_status("🔄 Scanning for devices...", [200, 200, 100])
-
-    # Force UI update
+    update_status("Scanning for devices...", [200, 200, 100])
     dpg.split_frame()
 
-    # Do refresh
-    ports_found = update_port_dropdown()
+    # Get ports
+    ports = find_ports_with_info()
 
-    # Re-enable button and show result
+    # Update dropdown
+    if dpg.does_item_exist(TAGS["port_combo"]):
+        if ports:
+            display_list = [f"{p['description']} - {p['device']}" for p in ports]
+            dpg.configure_item(TAGS["port_combo"], items=display_list, enabled=True)
+
+            if len(ports) == 1:
+                dpg.set_value(TAGS["port_combo"], display_list[0])
+                update_status(f"Found 1 device: {ports[0]['device']}", [100, 200, 100])
+            else:
+                update_status(f"Found {len(ports)} devices. Select a port to connect.", [150, 180, 150])
+                dpg.set_value(TAGS["port_combo"], display_list[0])
+        else:
+            dpg.configure_item(TAGS["port_combo"], items=["No device detected"], enabled=False)
+            update_status(
+                "No RP2040 device found. Connect device via USB and press Refresh.",
+                [255, 150, 50]
+            )
+
+    # Re-enable button
     if dpg.does_item_exist(sender):
         dpg.configure_item(sender, enabled=True)
 
-    if ports_found:
-        update_status("✓ Refresh complete", [100, 200, 100])
 
-
-def on_port_selected(sender, app_data, user_data) -> None:
-    """Callback when user selects a port from dropdown.
-
-    Args:
-        sender: Combo widget ID
-        app_data: Selected value (display string)
-        user_data: Optional user data
-    """
+def on_port_selected(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Callback when user selects a port from dropdown."""
     selected_port = get_selected_port()
-    if selected_port:
-        print(f"Port selected: {selected_port}")
-        if not is_connected():
-            update_status(f"Selected: {selected_port}. Press Connect.", [100, 180, 200])
+    if selected_port and not app.is_connected():
+        update_status(f"Selected: {selected_port}. Press Connect.", [100, 180, 200])
 
 
-def on_connect_clicked(sender, app_data, user_data) -> None:
-    """Callback for connect/disconnect button.
-
-    Args:
-        sender: Button widget ID
-        app_data: Button data (usually None for buttons)
-        user_data: Optional user data passed from button
-    """
-    global serial_connection
-
+def on_connect_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Callback for connect/disconnect button."""
     if serial is None:
-        update_status("❌ pyserial not installed!", [255, 100, 100])
+        update_status("pyserial not installed!", [255, 100, 100])
         return
 
-    if is_connected():
+    if app.is_connected():
         # Disconnect
-        try:
-            serial_connection.close()
-            serial_connection = None
+        update_status("Disconnecting...", [200, 200, 100])
+        dpg.split_frame()
 
-            # Update UI
-            if dpg.does_item_exist(TAGS["connect_btn"]):
-                dpg.set_item_label(TAGS["connect_btn"], "Connect")
+        task = SerialTask(command=SerialCommand.DISCONNECT)
+        result_queue = app.send_task(task)
 
-            if dpg.does_item_exist(TAGS["port_combo"]):
-                dpg.configure_item(TAGS["port_combo"], enabled=True)
+        # Check result after short delay
+        def check_disconnect():
+            try:
+                result = result_queue.get(timeout=2)
+                if result.success:
+                    handle_disconnect_state(app)
+                    update_status("Disconnected", [150, 180, 150])
+                else:
+                    update_status(f"Disconnect error: {result.message}", [255, 100, 100])
+            except queue.Empty:
+                update_status("Disconnect timeout", [255, 150, 50])
 
-            if dpg.does_item_exist(TAGS["refresh_btn"]):
-                dpg.configure_item(TAGS["refresh_btn"], enabled=True)
+        threading.Thread(target=check_disconnect, daemon=True).start()
 
-            if dpg.does_item_exist(TAGS["led_btn"]):
-                dpg.configure_item(TAGS["led_btn"], enabled=False)
-
-            update_connection_indicator(False)
-            update_status("✓ Disconnected", [150, 180, 150])
-            print("Disconnected from serial port")
-
-        except Exception as e:
-            update_status(f"❌ Disconnect error: {e}", [255, 100, 100])
-            print(f"Disconnect error: {e}")
     else:
         # Connect
         port = get_selected_port()
         if not port:
-            update_status("❌ No port selected!", [255, 100, 100])
+            update_status("No port selected!", [255, 100, 100])
             return
 
-        # Disable button and show feedback
+        # Disable button
         if dpg.does_item_exist(sender):
             dpg.configure_item(sender, enabled=False)
 
-        update_status(f"🔄 Connecting to {port}...", [200, 200, 100])
+        update_status(f"Connecting to {port}...", [200, 200, 100])
         dpg.split_frame()
 
+        task = SerialTask(command=SerialCommand.CONNECT, port=port)
+        result_queue = app.send_task(task)
+
+        # Check result in separate thread
+        def check_connect():
+            try:
+                result = result_queue.get(timeout=5)
+
+                # Re-enable button
+                if dpg.does_item_exist(sender):
+                    dpg.configure_item(sender, enabled=True)
+
+                if result.success:
+                    # Update UI
+                    if dpg.does_item_exist(TAGS["connect_btn"]):
+                        dpg.set_item_label(TAGS["connect_btn"], "Disconnect")
+
+                    if dpg.does_item_exist(TAGS["port_combo"]):
+                        dpg.configure_item(TAGS["port_combo"], enabled=False)
+
+                    if dpg.does_item_exist(TAGS["refresh_btn"]):
+                        dpg.configure_item(TAGS["refresh_btn"], enabled=False)
+
+                    if dpg.does_item_exist(TAGS["led_btn"]):
+                        dpg.configure_item(TAGS["led_btn"], enabled=True)
+
+                    update_connection_indicator(True)
+                    update_status(result.message, [100, 200, 100])
+
+                    # Start health monitoring
+                    app.send_task(SerialTask(command=SerialCommand.CHECK_HEALTH))
+
+                else:
+                    update_status(f"Connection failed: {result.message}", [255, 100, 100])
+
+            except queue.Empty:
+                if dpg.does_item_exist(sender):
+                    dpg.configure_item(sender, enabled=True)
+                update_status("Connection timeout", [255, 150, 50])
+
+        threading.Thread(target=check_connect, daemon=True).start()
+
+
+def on_led_toggle_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Callback for LED toggle button."""
+    # Disable button
+    if dpg.does_item_exist(sender):
+        dpg.configure_item(sender, enabled=False)
+
+    new_state = not app.get_led_state()
+
+    update_status(f"Turning LED {'ON' if new_state else 'OFF'}...", [200, 200, 100])
+    dpg.split_frame()
+
+    task = SerialTask(command=SerialCommand.SEND_LED, led_state=new_state)
+    result_queue = app.send_task(task)
+
+    # Check result in separate thread
+    def check_led():
         try:
-            # Attempt connection
-            serial_connection = serial.Serial(
-                port=port,
-                baudrate=115200,
-                timeout=1,
-                write_timeout=1
-            )
-
-            # Flush any initial data
-            serial_connection.reset_input_buffer()
-            serial_connection.reset_output_buffer()
-
-            # Wait for boot messages
-            time.sleep(0.5)
-
-            # Update UI on success
-            if dpg.does_item_exist(TAGS["connect_btn"]):
-                dpg.set_item_label(TAGS["connect_btn"], "Disconnect")
-                dpg.configure_item(TAGS["connect_btn"], enabled=True)
-
-            if dpg.does_item_exist(TAGS["port_combo"]):
-                dpg.configure_item(TAGS["port_combo"], enabled=False)
-
-            if dpg.does_item_exist(TAGS["refresh_btn"]):
-                dpg.configure_item(TAGS["refresh_btn"], enabled=False)
-
-            if dpg.does_item_exist(TAGS["led_btn"]):
-                dpg.configure_item(TAGS["led_btn"], enabled=True)
-
-            update_connection_indicator(True)
-            update_status(f"✓ Connected to {port}", [100, 200, 100])
-            print(f"Connected to {port}")
-
-        except serial.SerialException as e:
-            serial_connection = None
+            result = result_queue.get(timeout=2)
 
             # Re-enable button
             if dpg.does_item_exist(sender):
                 dpg.configure_item(sender, enabled=True)
 
-            update_status(f"❌ Connection failed: {e}", [255, 100, 100])
-            print(f"Connection error: {e}")
+            if result.success:
+                # Update button label
+                label = "Turn LED OFF" if result.led_state else "Turn LED ON"
+                if dpg.does_item_exist(sender):
+                    dpg.set_item_label(sender, label)
 
-        except Exception as e:
-            serial_connection = None
+                update_led_indicator(result.led_state)
+                update_status(result.message, [100, 200, 100])
+                update_last_response("ACK (0xFF)")
 
-            # Re-enable button
+            else:
+                # Check if disconnected
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(app)
+
+                update_status(f"Error: {result.message}", [255, 100, 100])
+                update_last_response(f"NACK/Error: {result.error or 'Unknown'}")
+
+        except queue.Empty:
             if dpg.does_item_exist(sender):
                 dpg.configure_item(sender, enabled=True)
+            update_status("Command timeout", [255, 150, 50])
+            update_last_response("Timeout")
 
-            update_status(f"❌ Unexpected error: {e}", [255, 100, 100])
-            print(f"Unexpected error: {e}")
+    threading.Thread(target=check_led, daemon=True).start()
 
 
-def on_led_toggle_clicked(sender, app_data, user_data) -> None:
-    """Callback for LED toggle button.
+def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Called every frame to check for completed operations."""
+    # Check results from worker thread
+    results = user_data.check_results()
 
-    Args:
-        sender: Button widget ID
-        app_data: Button data (usually None for buttons)
-        user_data: Optional user data passed from button
-    """
-    global led_state
+    for result in results:
+        if result.command == SerialCommand.CHECK_HEALTH:
+            if not result.success:
+                # Connection lost
+                handle_disconnect_state(user_data)
+                update_status(f"Connection lost: {result.message}", [255, 150, 50])
 
-    # Toggle state
-    new_state = not led_state
+                # Stop health checks
+                continue
 
-    # Send command
-    if send_led_command(new_state):
-        led_state = new_state
-        update_led_indicator(led_state)
+            # Schedule next health check
+            user_data.send_task(SerialTask(command=SerialCommand.CHECK_HEALTH))
 
-        # Update button label
-        if dpg.does_item_exist(TAGS["led_btn"]):
-            label = "Turn LED OFF" if led_state else "Turn LED ON"
-            dpg.set_item_label(TAGS["led_btn"], label)
 
+# ==========================================================================
+# MAIN
+# ==========================================================================
 
 def main() -> int:
-    """Main application with proper lifecycle management.
-
-    Returns:
-        Exit code (0 for success, non-zero for errors)
-    """
-    global serial_connection, led_state
+    """Main application entry point."""
+    # Initialize app
+    app = LEDControllerApp()
 
     # Initialize Dear PyGui context
     dpg.create_context()
@@ -491,7 +782,7 @@ def main() -> int:
             decorated=True,
         )
 
-        # Create primary window (full viewport)
+        # Create primary window
         with dpg.window(
             label="RP2040 LED Control",
             tag=TAGS["primary_window"],
@@ -504,7 +795,7 @@ def main() -> int:
             dpg.add_separator()
             dpg.add_spacer(height=10)
 
-            # Serial port selection group
+            # Serial port selection
             dpg.add_text("Serial Port:")
             dpg.add_spacer(height=5)
 
@@ -515,22 +806,21 @@ def main() -> int:
             else:
                 display_list = ["No device detected"]
 
-            # Port selection dropdown
             dpg.add_combo(
                 items=display_list,
                 tag=TAGS["port_combo"],
                 default_value=display_list[0] if display_list else "",
                 width=-1,
-                callback=on_port_selected,
+                callback=lambda s, d, a=app: on_port_selected(s, d, a),
             )
 
-            # Connection buttons row
+            # Connection buttons
             dpg.add_spacer(height=10)
             with dpg.group(horizontal=True):
                 dpg.add_button(
                     label="Refresh",
                     tag=TAGS["refresh_btn"],
-                    callback=on_refresh_clicked,
+                    callback=lambda s, d, a=app: on_refresh_clicked(s, d, a),
                     width=120,
                 )
 
@@ -539,7 +829,7 @@ def main() -> int:
                 dpg.add_button(
                     label="Connect",
                     tag=TAGS["connect_btn"],
-                    callback=on_connect_clicked,
+                    callback=lambda s, d, a=app: on_connect_clicked(s, d, a),
                     width=-1,
                 )
 
@@ -551,16 +841,16 @@ def main() -> int:
             with dpg.group(horizontal=True):
                 dpg.add_text("Connection:", color=[200, 200, 200])
                 dpg.add_spacer(width=10)
-                dpg.add_text(tag=TAGS["conn_indicator"], default_value="○ Disconnected", color=[150, 150, 150])
+                dpg.add_text(tag=TAGS["conn_indicator"], default_value="Disconnected", color=[150, 150, 150])
 
             dpg.add_spacer(height=8)
 
             with dpg.group(horizontal=True):
                 dpg.add_text("LED Status:", color=[200, 200, 200])
                 dpg.add_spacer(width=10)
-                dpg.add_text(tag=TAGS["led_indicator"], default_value="○ LED OFF", color=[150, 150, 150])
+                dpg.add_text(tag=TAGS["led_indicator"], default_value="LED OFF", color=[150, 150, 150])
 
-            # LED control button
+            # LED control
             dpg.add_spacer(height=15)
             dpg.add_separator()
             dpg.add_spacer(height=10)
@@ -568,12 +858,12 @@ def main() -> int:
             dpg.add_button(
                 label="Turn LED ON",
                 tag=TAGS["led_btn"],
-                callback=on_led_toggle_clicked,
+                callback=lambda s, d, a=app: on_led_toggle_clicked(s, d, a),
                 width=-1,
                 enabled=False,
             )
 
-            # Status message area
+            # Status messages
             dpg.add_spacer(height=15)
             dpg.add_separator()
             dpg.add_spacer(height=10)
@@ -587,41 +877,37 @@ def main() -> int:
             dpg.add_spacer(height=8)
             dpg.add_text(
                 tag=TAGS["last_response"],
-                default_value="Last response: None",
+                default_value="Last: None",
                 color=[180, 180, 180],
             )
 
-        # Set as primary window (fills viewport)
+        # Set as primary window
         dpg.set_primary_window(TAGS["primary_window"], True)
 
         # Setup and show viewport
         dpg.setup_dearpygui()
         dpg.show_viewport()
 
-        # Initial port scan and update
-        update_port_dropdown()
+        # Register frame callback for result checking
+        dpg.set_frame_callback(0, lambda s, d, a=app: on_frame_callback(s, d, a))
+
+        # Initial port scan
+        ports = find_ports_with_info()
+        if ports:
+            update_status(f"Found {len(ports)} device(s). Ready to connect.", [100, 200, 100])
+        else:
+            update_status("No device found. Connect RP2040 via USB.", [255, 150, 50])
 
         # Main loop
         dpg.start_dearpygui()
 
-        # Cleanup: close serial connection if open
-        if serial_connection and serial_connection.is_open:
-            serial_connection.close()
-            print("Serial connection closed on exit")
-
     except Exception as e:
-        print(f"ERROR: {e}")
-        import traceback
-        traceback.print_exc()
-
-        # Cleanup on error
-        if serial_connection and serial_connection.is_open:
-            serial_connection.close()
-
+        logger.error(f"Application error: {e}", exc_info=True)
         return 1
 
     finally:
-        # Always cleanup context
+        # Shutdown
+        app.shutdown()
         dpg.destroy_context()
 
     return 0
