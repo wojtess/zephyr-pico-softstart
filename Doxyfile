@@ -1,0 +1,35 @@
+# Doxyfile configuration for RP2040 LED Control Project
+# Generate with: doxygen Doxyfile
+
+PROJECT_NAME           = "RP2040 LED Control"
+PROJECT_BRIEF          = "PWM-based LED control system with softstart roadmap"
+PROJECT_NUMBER         = "0.1.0"
+
+OUTPUT_DIRECTORY       = docs
+CREATE_SUBDIRS         = NO
+
+INPUT                  = src src/main.c
+FILE_PATTERNS          = *.c *.h
+RECURSIVE              = NO
+EXCLUDE_PATTERNS       = */build/* */.zephyr/* */venv/*
+
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = NO
+
+HAVE_DOT               = YES
+DOT_NUM_THREADS        = 4
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+
+USE_MDFILE_AS_MAINPAGE = README.md

@@ -11,7 +11,7 @@ PYTHON     := $(VENV_DIR)/bin/python3
 
 UF2        := $(BUILD_DIR)/zephyr/zephyr.uf2
 
-.PHONY: deps build flash clean distclean
+.PHONY: deps build flash clean distclean docs doxygen
 
 # ---------------- deps (runs once; file-stamped) ----------------
 deps: $(WS_DIR)
@@ -46,4 +46,10 @@ clean:
 	rm -rf "$(BUILD_DIR)"
 	rm -rf $(WS_DIR)
 	rm -rf $(VENV_DIR)
+
+# ---------------- documentation ----------------
+docs doxygen:
+	@echo "Generating Doxygen documentation..."
+	@doxygen Doxyfile
+	@echo "Documentation generated in docs/html/index.html"
 

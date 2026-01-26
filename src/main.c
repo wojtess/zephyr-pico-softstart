@@ -1,15 +1,29 @@
 /**
  * @file main.c
- * @brief RP2040 Built-in LED Control via UART ACM Binary Protocol
+ * @brief RP2040 PWM LED Control via UART ACM Binary Protocol
  *
- * Hardware: RP2040 (Raspberry Pi Pico)
- * - LED: GPIO25 (built-in LED)
- * - UART: USB CDC ACM (virtual serial)
+ * @details This firmware implements a PWM-based LED control system for RP2040.
+ *          Future versions will extend this to softstart current control.
  *
- * Binary Protocol:
- *   Frame: [CMD][VALUE][CRC8] - 3 bytes
- *   CMD 0x01 = SET LED (0=OFF, 1+=ON)
- *   Response: ACK 0xFF or NACK 0xFE + error code
+ * **Hardware Platform:**
+ *   - MCU: RP2040 (Raspberry Pi Pico)
+ *   - LED: GPIO25 (built-in LED)
+ *   - Communication: USB CDC ACM (virtual serial port)
+ *
+ * **Binary Protocol Specification:**
+ *   - Frame Format: [CMD][VALUE][CRC8] (3 bytes)
+ *   - CMD 0x01: SET LED (0=OFF, 1+=ON)
+ *   - Response: ACK 0xFF or NACK 0xFE + error code
+ *   - CRC-8: Polynomial 0x07, Initial 0x00
+ *
+ * **Project Roadmap:**
+ *   1. LED ON/OFF control (current implementation)
+ *   2. PWM duty cycle control
+ *   3. Softstart with current regulation (1% accuracy)
+ *
+ * @author Project Team
+ * @version 0.1.0
+ * @date 2026-01-26
  */
 
 #include <zephyr/kernel.h>
@@ -20,28 +34,81 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/atomic.h>
 
-/* Device Tree Nodes */
+/* =========================================================================
+ * CONSTANTS AND DEFINITIONS
+ * ========================================================================= */
+
+/** @brief UART device node from device tree */
 #define UART_NODE DT_NODELABEL(cdc_acm_uart0)
+
+/** @brief LED device node from device tree */
 #define LED_NODE DT_NODELABEL(led0)
 
-/* Protocol Definitions */
+/* -------------------------------------------------------------------------
+ * Protocol Constants
+ * ------------------------------------------------------------------------- */
+/** @brief Command byte for LED control */
 #define CMD_SET_LED      0x01
+
+/** @brief Positive response (ACK) */
 #define RESP_ACK         0xFF
+
+/** @brief Negative response (NACK) */
 #define RESP_NACK        0xFE
+
+/** @brief Error code: CRC mismatch */
 #define ERR_CRC          0x01
+
+/** @brief Error code: Invalid command */
 #define ERR_INVALID_CMD  0x02
+
+/** @brief Error code: Invalid value */
 #define ERR_INVALID_VAL  0x03
 
-/* Global State */
+/* -------------------------------------------------------------------------
+ * Buffer Sizes
+ * ------------------------------------------------------------------------- */
+/** @brief UART RX ring buffer size in bytes */
+#define RX_BUF_SIZE  32
+
+/* =========================================================================
+ * GLOBAL VARIABLES
+ * ========================================================================= */
+
+/** @brief Current LED state (atomic for thread safety) */
 static atomic_val_t led_state = ATOMIC_INIT(0);
 
-/* Cached device pointers */
+/** @brief Cached UART device pointer */
 static const struct device *uart_dev;
 
-/* GPIO pin number from devicetree */
+/** @brief GPIO pin specification for LED from device tree */
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED_NODE, gpios);
 
-/* CRC-8 (Polynomial 0x07, Initial 0x00) */
+/** @brief Current protocol state machine state */
+static enum proto_state proto_state = STATE_WAIT_CMD;
+
+/** @brief Frame buffer for storing CMD + VALUE */
+static uint8_t frame_buf[2];
+
+/** @brief UART RX ring buffer */
+static uint8_t rx_buf[RX_BUF_SIZE];
+
+/** @brief Ring buffer head pointer (write position) */
+static volatile size_t rx_head = 0;
+
+/** @brief Ring buffer tail pointer (read position) */
+static volatile size_t rx_tail = 0;
+
+/**
+ * @brief Calculate CRC-8 checksum
+ *
+ * @details Uses polynomial 0x07 with initial value 0x00.
+ *          This is used to verify integrity of protocol frames.
+ *
+ * @param data Input data buffer
+ * @param len Length of data in bytes
+ * @return CRC-8 checksum (0-255)
+ */
 static uint8_t crc8(const uint8_t *data, size_t len)
 {
 	uint8_t crc = 0x00;
@@ -59,13 +126,24 @@ static uint8_t crc8(const uint8_t *data, size_t len)
 	return crc;
 }
 
-/* Send response byte via UART */
+/**
+ * @brief Send response byte via UART
+ *
+ * @param resp Response byte (RESP_ACK or RESP_NACK)
+ */
 static void send_response(uint8_t resp)
 {
 	uart_fifo_fill(uart_dev, &resp, 1);
 }
 
-/* Set LED state (0=OFF, 1+=ON) */
+/**
+ * @brief Set LED state
+ *
+ * @details Turns LED ON (state > 0) or OFF (state == 0).
+ *          Uses atomic operations for thread safety.
+ *
+ * @param state LED state (0=OFF, 1+=ON)
+ */
 static void set_led(uint8_t state)
 {
 	int value = (state > 0) ? 1 : 0;
@@ -74,17 +152,26 @@ static void set_led(uint8_t state)
 	atomic_set(&led_state, value);
 }
 
-/* Protocol state machine states */
+/**
+ * @brief Protocol state machine states
+ */
 enum proto_state {
-	STATE_WAIT_CMD,
-	STATE_WAIT_VALUE,
-	STATE_WAIT_CRC,
+	STATE_WAIT_CMD,    /**< Waiting for command byte */
+	STATE_WAIT_VALUE,  /**< Waiting for value byte */
+	STATE_WAIT_CRC,    /**< Waiting for CRC byte */
 };
 
 static enum proto_state proto_state = STATE_WAIT_CMD;
 static uint8_t frame_buf[2];  /* CMD + VALUE */
 
-/* Process received byte through state machine */
+/**
+ * @brief Process received byte through protocol state machine
+ *
+ * @details Implements 3-state protocol parser:
+ *          WAIT_CMD -> WAIT_VALUE -> WAIT_CRC -> execute command
+ *
+ * @param byte Received byte from UART
+ */
 static void process_byte(uint8_t byte)
 {
 	switch (proto_state) {
@@ -134,7 +221,16 @@ static uint8_t rx_buf[RX_BUF_SIZE];
 static volatile size_t rx_head = 0;
 static volatile size_t rx_tail = 0;
 
-/* Ring buffer helpers (ISR-safe) */
+/* =========================================================================
+ * RING BUFFER FUNCTIONS (ISR-safe)
+ * ========================================================================= */
+
+/**
+ * @brief Put byte into ring buffer (ISR-safe)
+ *
+ * @param byte Byte to add
+ * @return true on success, false if buffer full
+ */
 static bool ring_buf_put_byte(uint8_t byte)
 {
 	size_t next_head = (rx_head + 1) % RX_BUF_SIZE;
@@ -148,6 +244,12 @@ static bool ring_buf_put_byte(uint8_t byte)
 	return true;
 }
 
+/**
+ * @brief Get byte from ring buffer
+ *
+ * @param byte Pointer to store retrieved byte
+ * @return true on success, false if buffer empty
+ */
 static bool ring_buf_get_byte(uint8_t *byte)
 {
 	if (rx_head == rx_tail) {
@@ -159,7 +261,19 @@ static bool ring_buf_get_byte(uint8_t *byte)
 	return true;
 }
 
-/* UART RX interrupt handler - ISR safe */
+/* =========================================================================
+ * UART INTERRUPT HANDLERS
+ * ========================================================================= */
+
+/**
+ * @brief UART RX interrupt handler (ISR context)
+ *
+ * @details Called by UART interrupt to read bytes into ring buffer.
+ *          Must be ISR-safe (no blocking operations).
+ *
+ * @param dev UART device structure
+ * @param user_data User data (unused)
+ */
 static void uart_rx_handler(const struct device *dev, void *user_data)
 {
 	uint8_t buf[16];
@@ -174,7 +288,12 @@ static void uart_rx_handler(const struct device *dev, void *user_data)
 	}
 }
 
-/* Process ring buffer (called from main loop) */
+/**
+ * @brief Process ring buffer contents (main loop context)
+ *
+ * @details Reads bytes from ring buffer and processes them
+ *          through the protocol state machine.
+ */
 static void process_ring_buffer(void)
 {
 	uint8_t byte;
@@ -184,6 +303,15 @@ static void process_ring_buffer(void)
 	}
 }
 
+/**
+ * @brief Main application entry point
+ *
+ * @details Initializes UART, GPIO, and interrupt handlers.
+ *          Waits for USB DTR signal before entering main loop.
+ *          Main loop processes incoming protocol frames at 10ms intervals.
+ *
+ * @return 0 on success (never reached in normal operation)
+ */
 int main(void)
 {
 	uint32_t dtr = 0;
