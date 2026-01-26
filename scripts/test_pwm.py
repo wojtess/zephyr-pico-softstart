@@ -12,26 +12,18 @@ import serial
 import time
 import sys
 
-# Protocol constants
-CMD_SET_LED = 0x01
-RESP_ACK = 0xFF
-RESP_NACK = 0xFE
-ERR_CRC = 0x01
-ERR_INVALID_CMD = 0x02
-ERR_INVALID_VAL = 0x03
-
-
-def crc8(data: bytes) -> int:
-    """Calculate CRC-8 (Polynomial 0x07, Initial 0x00)"""
-    crc = 0x00
-    for byte in data:
-        crc ^= byte
-        for _ in range(8):
-            if crc & 0x80:
-                crc = (crc << 1) ^ 0x07
-            else:
-                crc <<= 1
-    return crc & 0xFF
+from protocol import (
+    CMD_SET_LED,
+    RESP_ACK,
+    RESP_NACK,
+    ERR_CRC,
+    ERR_INVALID_CMD,
+    ERR_INVALID_VAL,
+    crc8,
+    get_error_name,
+    build_frame,
+    parse_response,
+)
 
 
 def send_led_command(ser: serial.Serial, state: int) -> bool:
@@ -40,9 +32,8 @@ def send_led_command(ser: serial.Serial, state: int) -> bool:
         print(f"  ERROR: Invalid value {state}")
         return False
 
-    cmd = bytes([CMD_SET_LED, state])
-    crc = crc8(cmd)
-    frame = cmd + bytes([crc])
+    frame = build_frame(CMD_SET_LED, state)
+    crc = frame[2]
 
     state_str = "OFF" if state == 0 else f"ON ({state})"
     print(f"  Sending: CMD=0x{CMD_SET_LED:02X} VALUE={state} CRC=0x{crc:02X}")
@@ -54,22 +45,21 @@ def send_led_command(ser: serial.Serial, state: int) -> bool:
         print("  ERROR: No response")
         return False
 
-    resp_byte = resp[0]
-    if resp_byte == RESP_ACK:
-        print(f"  -> ACK (0x{resp_byte:02X}) ✓")
+    resp_type, err_code = parse_response(resp)
+
+    if resp_type == RESP_ACK:
+        print(f"  -> ACK (0x{resp_type:02X}) ✓")
         return True
-    elif resp_byte == RESP_NACK:
-        err = ser.read(1)
-        err_code = err[0] if err else 0
-        err_name = {
-            ERR_CRC: "CRC error",
-            ERR_INVALID_CMD: "Invalid command",
-            ERR_INVALID_VAL: "Invalid value",
-        }.get(err_code, f"Unknown error {err_code}")
-        print(f"  -> NACK (0x{resp_byte:02X}) {err_name}")
+    elif resp_type == RESP_NACK:
+        # Read error code if not already read
+        if err_code == 0:
+            err = ser.read(1)
+            err_code = err[0] if err else 0
+        err_name = get_error_name(err_code)
+        print(f"  -> NACK (0x{resp_type:02X}) {err_name}")
         return False
     else:
-        print(f"  -> Unknown response 0x{resp_byte:02X}")
+        print(f"  -> Unknown response 0x{resp_type:02X}")
         return False
 
 
