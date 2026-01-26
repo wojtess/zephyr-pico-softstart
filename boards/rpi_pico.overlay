@@ -1,0 +1,18 @@
+#include <zephyr/dt-bindings/pinctrl/rpi-pico-rp2040-pinctrl.h>
+
+/* Console via USB CDC ACM */
+/ {
+	chosen {
+		zephyr,console = &cdc_acm_uart0;
+	};
+};
+
+&zephyr_udc0 {
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "CDC_ACM_0";
+	};
+};
+
+/* Built-in LED is already defined in rpi_pico-led.dtsi (GPIO25) */
+/* No overlay needed - just enable it if disabled */

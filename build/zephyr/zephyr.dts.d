@@ -1,0 +1,33 @@
+empty_file.o: \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/misc/empty_file.c \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/raspberrypi/rpi_pico/rpi_pico.dts \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/raspberrypi/rpi_pico/rpi_pico-common.dtsi \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/dts/common/freq.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/dts/arm/raspberrypi/rpi_pico/rp2040.dtsi \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/dts/arm/armv6-m.dtsi \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/dts/common/skeleton.dtsi \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/dt-bindings/adc/adc.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/dt-bindings/dt-util.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_macro.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_internal.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_loops.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_listify.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_internal_is_eq.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_internal_util_inc.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_internal_util_dec.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_internal_util_x2.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/dt-bindings/gpio/gpio.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/dt-bindings/clock/rpi_pico_rp2040_clock.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/dt-bindings/clock/rpi_pico_clock_common.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/dt-bindings/i2c/i2c.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/dt-bindings/regulator/rpi_pico.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/dt-bindings/reset/rp2040_reset.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/dts/common/mem.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/dts/arm/raspberrypi/rpi_pico/override.dtsi \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/raspberrypi/rpi_pico/rpi_pico-pinctrl.dtsi \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/dt-bindings/pinctrl/rpi-pico-rp2040-pinctrl.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/dt-bindings/pinctrl/rpi-pico-pinctrl-common.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/raspberrypi/rpi_pico/../common/rpi_pico-pinctrl-common.dtsi \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/dt-bindings/pwm/pwm.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/raspberrypi/rpi_pico/../common/rpi_pico-led.dtsi \
+ /home/wojtess/Documents/put/pico/project1/boards/rpi_pico.overlay
