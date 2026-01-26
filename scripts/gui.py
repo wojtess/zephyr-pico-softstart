@@ -2,12 +2,13 @@
 """
 RP2040 LED Control - Dear PyGui Application
 
-Step 2: Serial port detection with improved UX and error handling.
+Step 3: Serial connect/disconnect functionality.
 
 Features:
 - Auto-detect serial ports (Linux/macOS/Windows)
 - Dropdown port selection with device descriptions
 - Refresh button with visual feedback
+- Connect/Disconnect button with state management
 - Status message area
 - Auto-select if only one port found
 """
@@ -15,6 +16,12 @@ Features:
 import sys
 import glob
 from typing import List, Optional, Dict, Any
+
+try:
+    import serial
+except ImportError:
+    print("WARNING: pyserial not installed. Install with: pip install pyserial")
+    serial = None
 
 try:
     import dearpygui.dearpygui as dpg
@@ -29,8 +36,12 @@ TAGS = {
     "primary_window": "win_primary",
     "port_combo": "combo_port",
     "refresh_btn": "btn_refresh",
+    "connect_btn": "btn_connect",
     "status_message": "txt_status",
 }
+
+# Global connection state
+serial_connection: Optional[serial.Serial] = None
 
 
 def find_ports_with_info() -> List[Dict[str, str]]:
@@ -162,6 +173,16 @@ def get_selected_port() -> Optional[str]:
     return None
 
 
+def is_connected() -> bool:
+    """Check if currently connected to a serial port.
+
+    Returns:
+        True if connected, False otherwise
+    """
+    global serial_connection
+    return serial_connection is not None and serial_connection.is_open
+
+
 def on_refresh_clicked(sender, app_data, user_data) -> None:
     """Callback for refresh button click with visual feedback.
 
@@ -201,7 +222,110 @@ def on_port_selected(sender, app_data, user_data) -> None:
     selected_port = get_selected_port()
     if selected_port:
         print(f"Port selected: {selected_port}")
-        update_status(f"Selected: {selected_port}. Ready to connect.", [100, 180, 200])
+        if not is_connected():
+            update_status(f"Selected: {selected_port}. Press Connect.", [100, 180, 200])
+
+
+def on_connect_clicked(sender, app_data, user_data) -> None:
+    """Callback for connect/disconnect button.
+
+    Args:
+        sender: Button widget ID
+        app_data: Button data (usually None for buttons)
+        user_data: Optional user data passed from button
+    """
+    global serial_connection
+
+    if serial is None:
+        update_status("❌ pyserial not installed!", [255, 100, 100])
+        return
+
+    if is_connected():
+        # Disconnect
+        try:
+            serial_connection.close()
+            serial_connection = None
+
+            # Update UI
+            if dpg.does_item_exist(TAGS["connect_btn"]):
+                dpg.set_item_label(TAGS["connect_btn"], "Connect")
+
+            if dpg.does_item_exist(TAGS["port_combo"]):
+                dpg.configure_item(TAGS["port_combo"], enabled=True)
+
+            if dpg.does_item_exist(TAGS["refresh_btn"]):
+                dpg.configure_item(TAGS["refresh_btn"], enabled=True)
+
+            update_status("✓ Disconnected", [150, 180, 150])
+            print("Disconnected from serial port")
+
+        except Exception as e:
+            update_status(f"❌ Disconnect error: {e}", [255, 100, 100])
+            print(f"Disconnect error: {e}")
+    else:
+        # Connect
+        port = get_selected_port()
+        if not port:
+            update_status("❌ No port selected!", [255, 100, 100])
+            return
+
+        # Disable button and show feedback
+        if dpg.does_item_exist(sender):
+            dpg.configure_item(sender, enabled=False)
+
+        update_status(f"🔄 Connecting to {port}...", [200, 200, 100])
+        dpg.split_frame()
+
+        try:
+            # Attempt connection
+            serial_connection = serial.Serial(
+                port=port,
+                baudrate=115200,
+                timeout=1,
+                write_timeout=1
+            )
+
+            # Flush any initial data
+            serial_connection.reset_input_buffer()
+            serial_connection.reset_output_buffer()
+
+            # Wait for boot messages
+            import time
+            time.sleep(0.5)
+
+            # Update UI on success
+            if dpg.does_item_exist(TAGS["connect_btn"]):
+                dpg.set_item_label(TAGS["connect_btn"], "Disconnect")
+                dpg.configure_item(TAGS["connect_btn"], enabled=True)
+
+            if dpg.does_item_exist(TAGS["port_combo"]):
+                dpg.configure_item(TAGS["port_combo"], enabled=False)
+
+            if dpg.does_item_exist(TAGS["refresh_btn"]):
+                dpg.configure_item(TAGS["refresh_btn"], enabled=False)
+
+            update_status(f"✓ Connected to {port}", [100, 200, 100])
+            print(f"Connected to {port}")
+
+        except serial.SerialException as e:
+            serial_connection = None
+
+            # Re-enable button
+            if dpg.does_item_exist(sender):
+                dpg.configure_item(sender, enabled=True)
+
+            update_status(f"❌ Connection failed: {e}", [255, 100, 100])
+            print(f"Connection error: {e}")
+
+        except Exception as e:
+            serial_connection = None
+
+            # Re-enable button
+            if dpg.does_item_exist(sender):
+                dpg.configure_item(sender, enabled=True)
+
+            update_status(f"❌ Unexpected error: {e}", [255, 100, 100])
+            print(f"Unexpected error: {e}")
 
 
 def main() -> int:
@@ -210,6 +334,8 @@ def main() -> int:
     Returns:
         Exit code (0 for success, non-zero for errors)
     """
+    global serial_connection
+
     # Initialize Dear PyGui context
     dpg.create_context()
 
@@ -218,7 +344,7 @@ def main() -> int:
         dpg.create_viewport(
             title="RP2040 LED Control",
             width=500,
-            height=350,
+            height=400,
             clear_color=[30, 30, 30, 255],
             decorated=True,
         )
@@ -256,13 +382,22 @@ def main() -> int:
                 callback=on_port_selected,
             )
 
-            # Refresh button row
+            # Buttons row
             dpg.add_spacer(height=10)
             with dpg.group(horizontal=True):
                 dpg.add_button(
-                    label="Refresh Ports",
+                    label="Refresh",
                     tag=TAGS["refresh_btn"],
                     callback=on_refresh_clicked,
+                    width=120,
+                )
+
+                dpg.add_spacer(width=10)
+
+                dpg.add_button(
+                    label="Connect",
+                    tag=TAGS["connect_btn"],
+                    callback=on_connect_clicked,
                     width=-1,
                 )
 
@@ -275,7 +410,7 @@ def main() -> int:
             )
 
             dpg.add_spacer(height=15)
-            dpg.add_text("Connection controls coming soon...", color=[150, 150, 150])
+            dpg.add_text("LED controls coming soon...", color=[150, 150, 150])
 
         # Set as primary window (fills viewport)
         dpg.set_primary_window(TAGS["primary_window"], True)
@@ -290,10 +425,20 @@ def main() -> int:
         # Main loop
         dpg.start_dearpygui()
 
+        # Cleanup: close serial connection if open
+        if serial_connection and serial_connection.is_open:
+            serial_connection.close()
+            print("Serial connection closed on exit")
+
     except Exception as e:
         print(f"ERROR: {e}")
         import traceback
         traceback.print_exc()
+
+        # Cleanup on error
+        if serial_connection and serial_connection.is_open:
+            serial_connection.close()
+
         return 1
 
     finally:
