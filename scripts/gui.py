@@ -2,19 +2,21 @@
 """
 RP2040 LED Control - Dear PyGui Application
 
-Step 3: Serial connect/disconnect functionality.
+Complete application with serial connection, protocol implementation,
+LED toggle button, and visual status indicators.
 
 Features:
 - Auto-detect serial ports (Linux/macOS/Windows)
 - Dropdown port selection with device descriptions
-- Refresh button with visual feedback
 - Connect/Disconnect button with state management
-- Status message area
-- Auto-select if only one port found
+- LED ON/OFF toggle with protocol communication
+- Visual status indicators (connection, LED state)
+- Status message area with color coding
 """
 
 import sys
 import glob
+import time
 from typing import List, Optional, Dict, Any
 
 try:
@@ -30,6 +32,16 @@ except ImportError as e:
     print("Install it with: ./venv/bin/pip install dearpygui")
     sys.exit(1)
 
+# Import protocol module
+from protocol import (
+    CMD_SET_LED,
+    RESP_ACK,
+    RESP_NACK,
+    build_frame,
+    parse_response,
+    get_error_name,
+)
+
 
 # Tag constants for better resource management
 TAGS = {
@@ -37,11 +49,16 @@ TAGS = {
     "port_combo": "combo_port",
     "refresh_btn": "btn_refresh",
     "connect_btn": "btn_connect",
+    "led_btn": "btn_led",
     "status_message": "txt_status",
+    "conn_indicator": "ind_conn",
+    "led_indicator": "ind_led",
+    "last_response": "txt_response",
 }
 
-# Global connection state
+# Global state
 serial_connection: Optional[serial.Serial] = None
+led_state: bool = False  # Track LED state locally
 
 
 def find_ports_with_info() -> List[Dict[str, str]]:
@@ -151,6 +168,46 @@ def update_status(message: str, color: List[int]) -> None:
         dpg.configure_item(TAGS["status_message"], color=color)
 
 
+def update_connection_indicator(connected: bool) -> None:
+    """Update the connection status indicator.
+
+    Args:
+        connected: True if connected, False otherwise
+    """
+    if dpg.does_item_exist(TAGS["conn_indicator"]):
+        if connected:
+            dpg.configure_item(TAGS["conn_indicator"], color=[100, 255, 100])  # Green
+            dpg.set_value(TAGS["conn_indicator"], "● Connected")
+        else:
+            dpg.configure_item(TAGS["conn_indicator"], color=[150, 150, 150])  # Gray
+            dpg.set_value(TAGS["conn_indicator"], "○ Disconnected")
+
+
+def update_led_indicator(on: bool) -> None:
+    """Update the LED status indicator.
+
+    Args:
+        on: True if LED is ON, False if OFF
+    """
+    if dpg.does_item_exist(TAGS["led_indicator"]):
+        if on:
+            dpg.configure_item(TAGS["led_indicator"], color=[100, 255, 100])  # Green
+            dpg.set_value(TAGS["led_indicator"], "● LED ON")
+        else:
+            dpg.configure_item(TAGS["led_indicator"], color=[150, 150, 150])  # Gray
+            dpg.set_value(TAGS["led_indicator"], "○ LED OFF")
+
+
+def update_last_response(message: str) -> None:
+    """Update the last response display.
+
+    Args:
+        message: Response message to display
+    """
+    if dpg.does_item_exist(TAGS["last_response"]):
+        dpg.set_value(TAGS["last_response"], f"Last response: {message}")
+
+
 def get_selected_port() -> Optional[str]:
     """Get the currently selected port device path.
 
@@ -181,6 +238,60 @@ def is_connected() -> bool:
     """
     global serial_connection
     return serial_connection is not None and serial_connection.is_open
+
+
+def send_led_command(state: bool) -> bool:
+    """Send LED control command to device.
+
+    Args:
+        state: True to turn LED ON, False to turn OFF
+
+    Returns:
+        True if command succeeded (ACK received), False otherwise
+    """
+    global serial_connection
+
+    if not is_connected():
+        update_status("❌ Not connected!", [255, 100, 100])
+        return False
+
+    value = 1 if state else 0
+    frame = build_frame(CMD_SET_LED, value)
+
+    try:
+        # Send command
+        serial_connection.write(frame)
+        serial_connection.flush()
+
+        # Read response
+        resp = serial_connection.read(1)
+
+        if not resp:
+            update_status("❌ No response from device", [255, 100, 100])
+            update_last_response("Timeout")
+            return False
+
+        resp_type, err_code = parse_response(resp)
+
+        if resp_type == RESP_ACK:
+            update_status(f"✓ LED turned {'ON' if state else 'OFF'}", [100, 200, 100])
+            update_last_response("ACK (0xFF)")
+            return True
+        else:  # RESP_NACK
+            error_name = get_error_name(err_code)
+            update_status(f"❌ Command failed: {error_name}", [255, 100, 100])
+            update_last_response(f"NACK (0x{resp_type:02X}): {error_name}")
+            return False
+
+    except serial.SerialException as e:
+        update_status(f"❌ Serial error: {e}", [255, 100, 100])
+        update_last_response(f"Error: {e}")
+        return False
+
+    except Exception as e:
+        update_status(f"❌ Unexpected error: {e}", [255, 100, 100])
+        update_last_response(f"Error: {e}")
+        return False
 
 
 def on_refresh_clicked(sender, app_data, user_data) -> None:
@@ -256,6 +367,10 @@ def on_connect_clicked(sender, app_data, user_data) -> None:
             if dpg.does_item_exist(TAGS["refresh_btn"]):
                 dpg.configure_item(TAGS["refresh_btn"], enabled=True)
 
+            if dpg.does_item_exist(TAGS["led_btn"]):
+                dpg.configure_item(TAGS["led_btn"], enabled=False)
+
+            update_connection_indicator(False)
             update_status("✓ Disconnected", [150, 180, 150])
             print("Disconnected from serial port")
 
@@ -290,7 +405,6 @@ def on_connect_clicked(sender, app_data, user_data) -> None:
             serial_connection.reset_output_buffer()
 
             # Wait for boot messages
-            import time
             time.sleep(0.5)
 
             # Update UI on success
@@ -304,6 +418,10 @@ def on_connect_clicked(sender, app_data, user_data) -> None:
             if dpg.does_item_exist(TAGS["refresh_btn"]):
                 dpg.configure_item(TAGS["refresh_btn"], enabled=False)
 
+            if dpg.does_item_exist(TAGS["led_btn"]):
+                dpg.configure_item(TAGS["led_btn"], enabled=True)
+
+            update_connection_indicator(True)
             update_status(f"✓ Connected to {port}", [100, 200, 100])
             print(f"Connected to {port}")
 
@@ -328,13 +446,37 @@ def on_connect_clicked(sender, app_data, user_data) -> None:
             print(f"Unexpected error: {e}")
 
 
+def on_led_toggle_clicked(sender, app_data, user_data) -> None:
+    """Callback for LED toggle button.
+
+    Args:
+        sender: Button widget ID
+        app_data: Button data (usually None for buttons)
+        user_data: Optional user data passed from button
+    """
+    global led_state
+
+    # Toggle state
+    new_state = not led_state
+
+    # Send command
+    if send_led_command(new_state):
+        led_state = new_state
+        update_led_indicator(led_state)
+
+        # Update button label
+        if dpg.does_item_exist(TAGS["led_btn"]):
+            label = "Turn LED OFF" if led_state else "Turn LED ON"
+            dpg.set_item_label(TAGS["led_btn"], label)
+
+
 def main() -> int:
     """Main application with proper lifecycle management.
 
     Returns:
         Exit code (0 for success, non-zero for errors)
     """
-    global serial_connection
+    global serial_connection, led_state
 
     # Initialize Dear PyGui context
     dpg.create_context()
@@ -343,8 +485,8 @@ def main() -> int:
         # Configure viewport
         dpg.create_viewport(
             title="RP2040 LED Control",
-            width=500,
-            height=400,
+            width=550,
+            height=500,
             clear_color=[30, 30, 30, 255],
             decorated=True,
         )
@@ -382,7 +524,7 @@ def main() -> int:
                 callback=on_port_selected,
             )
 
-            # Buttons row
+            # Connection buttons row
             dpg.add_spacer(height=10)
             with dpg.group(horizontal=True):
                 dpg.add_button(
@@ -401,16 +543,53 @@ def main() -> int:
                     width=-1,
                 )
 
+            # Status indicators
+            dpg.add_spacer(height=15)
+            dpg.add_separator()
+            dpg.add_spacer(height=10)
+
+            with dpg.group(horizontal=True):
+                dpg.add_text("Connection:", color=[200, 200, 200])
+                dpg.add_spacer(width=10)
+                dpg.add_text(tag=TAGS["conn_indicator"], default_value="○ Disconnected", color=[150, 150, 150])
+
+            dpg.add_spacer(height=8)
+
+            with dpg.group(horizontal=True):
+                dpg.add_text("LED Status:", color=[200, 200, 200])
+                dpg.add_spacer(width=10)
+                dpg.add_text(tag=TAGS["led_indicator"], default_value="○ LED OFF", color=[150, 150, 150])
+
+            # LED control button
+            dpg.add_spacer(height=15)
+            dpg.add_separator()
+            dpg.add_spacer(height=10)
+
+            dpg.add_button(
+                label="Turn LED ON",
+                tag=TAGS["led_btn"],
+                callback=on_led_toggle_clicked,
+                width=-1,
+                enabled=False,
+            )
+
             # Status message area
             dpg.add_spacer(height=15)
+            dpg.add_separator()
+            dpg.add_spacer(height=10)
+
             dpg.add_text(
                 tag=TAGS["status_message"],
                 default_value="Select a serial port to connect",
-                wrap=450,
+                wrap=500,
             )
 
-            dpg.add_spacer(height=15)
-            dpg.add_text("LED controls coming soon...", color=[150, 150, 150])
+            dpg.add_spacer(height=8)
+            dpg.add_text(
+                tag=TAGS["last_response"],
+                default_value="Last response: None",
+                color=[180, 180, 180],
+            )
 
         # Set as primary window (fills viewport)
         dpg.set_primary_window(TAGS["primary_window"], True)
