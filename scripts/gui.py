@@ -2,17 +2,19 @@
 """
 RP2040 LED Control - Dear PyGui Application
 
-Step 2: Serial port detection and dropdown selection.
+Step 2: Serial port detection with improved UX and error handling.
 
 Features:
 - Auto-detect serial ports (Linux/macOS/Windows)
-- Dropdown port selection
-- Refresh button to rescan ports
+- Dropdown port selection with device descriptions
+- Refresh button with visual feedback
+- Status message area
+- Auto-select if only one port found
 """
 
 import sys
 import glob
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 try:
     import dearpygui.dearpygui as dpg
@@ -27,78 +29,179 @@ TAGS = {
     "primary_window": "win_primary",
     "port_combo": "combo_port",
     "refresh_btn": "btn_refresh",
+    "status_message": "txt_status",
 }
 
 
-def find_ports() -> List[str]:
-    """Auto-detect available serial ports.
+def find_ports_with_info() -> List[Dict[str, str]]:
+    """Auto-detect available serial ports with device information.
 
     Returns:
-        List of port paths (e.g., ["/dev/ttyACM0", "/dev/ttyACM1"])
+        List of dicts with 'device' and 'description' keys
     """
-    ports = []
+    ports_info = []
 
-    # Linux
-    ports.extend(glob.glob("/dev/ttyACM*"))
-    ports.extend(glob.glob("/dev/ttyUSB*"))
+    # Linux - get basic info
+    for port in glob.glob("/dev/ttyACM*"):
+        ports_info.append({"device": port, "description": "ACM Device"})
+    for port in glob.glob("/dev/ttyUSB*"):
+        ports_info.append({"device": port, "description": "USB Serial"})
 
     # macOS
-    ports.extend(glob.glob("/dev/cu.usbmodem*"))
-    ports.extend(glob.glob("/dev/cu.usbserial*"))
+    for port in glob.glob("/dev/cu.usbmodem*"):
+        ports_info.append({"device": port, "description": "USB Modem"})
+    for port in glob.glob("/dev/cu.usbserial*"):
+        ports_info.append({"device": port, "description": "USB Serial"})
 
-    # Windows (try if available)
+    # Windows - try to get more detailed info
     try:
         import serial.tools.list_ports
         for port in serial.tools.list_ports.comports():
             if "ACM" in port.description or "USB" in port.description:
-                ports.append(port.device)
-    except ImportError:
+                ports_info.append({
+                    "device": port.device,
+                    "description": port.description or "USB Device"
+                })
+    except (ImportError, OSError):
         pass
 
-    return sorted(set(ports))  # Remove duplicates and sort
+    return ports_info
 
 
-def refresh_port_list() -> List[str]:
+def refresh_port_list() -> List[Dict[str, str]]:
     """Refresh the list of available serial ports.
 
     Returns:
-        List of port paths
+        List of dicts with 'device' and 'description' keys
     """
-    ports = find_ports()
+    ports = find_ports_with_info()
 
     if ports:
-        print(f"Found {len(ports)} port(s): {ports}")
+        print(f"Found {len(ports)} port(s): {[p['device'] for p in ports]}")
     else:
         print("No serial ports found")
 
     return ports
 
 
-def update_port_dropdown():
-    """Update the port dropdown with current port list."""
+def update_port_dropdown() -> bool:
+    """Update the port dropdown with current port list.
+
+    Returns:
+        True if ports were found, False otherwise
+    """
+    # Verify widget exists before operations
+    if not dpg.does_item_exist(TAGS["port_combo"]):
+        print(f"WARNING: Port combo widget {TAGS['port_combo']} does not exist")
+        return False
+
+    if not dpg.does_item_exist(TAGS["status_message"]):
+        print(f"WARNING: Status message widget {TAGS['status_message']} does not exist")
+        return False
+
     ports = refresh_port_list()
 
-    # Get current selection
-    try:
-        current_selection = dpg.get_value(TAGS["port_combo"])
-    except:
-        current_selection = None
-
-    # Configure combo with new list
     if ports:
-        dpg.configure_item(TAGS["port_combo"], items=ports)
-        # Restore selection if still valid, otherwise select first
-        if current_selection in ports:
-            dpg.set_value(TAGS["port_combo"], current_selection)
-        elif ports:
-            dpg.set_value(TAGS["port_combo"], ports[0])
+        # Create display list with descriptions
+        display_list = [f"{p['description']} - {p['device']}" for p in ports]
+        dpg.configure_item(TAGS["port_combo"], items=display_list, enabled=True)
+
+        # Auto-select if only one port
+        if len(ports) == 1:
+            dpg.set_value(TAGS["port_combo"], display_list[0])
+            update_status(f"✓ Found 1 device: {ports[0]['device']}", [100, 200, 100])
+        else:
+            update_status(f"✓ Found {len(ports)} devices. Select a port to connect.", [150, 180, 150])
+            dpg.set_value(TAGS["port_combo"], display_list[0])
+
+        return True
     else:
-        dpg.configure_item(TAGS["port_combo"], items=["No ports found"])
+        # No ports found - disable combo
+        dpg.configure_item(TAGS["port_combo"], items=["No device detected"], enabled=False)
+        update_status(
+            "⚠ No RP2040 device found. Please:\n"
+            "   • Connect your RP2040 via USB\n"
+            "   • Press the 'Refresh' button\n"
+            "   • Check USB cable connection",
+            [255, 150, 50]
+        )
+        return False
 
 
-def on_refresh_clicked(sender, app_data, user_data):
-    """Callback for refresh button click."""
-    update_port_dropdown()
+def update_status(message: str, color: List[int]) -> None:
+    """Update the status message with text and color.
+
+    Args:
+        message: Status message text
+        color: RGB color list [r, g, b]
+    """
+    if dpg.does_item_exist(TAGS["status_message"]):
+        dpg.set_value(TAGS["status_message"], message)
+        dpg.configure_item(TAGS["status_message"], color=color)
+
+
+def get_selected_port() -> Optional[str]:
+    """Get the currently selected port device path.
+
+    Returns:
+        Port device path (e.g., "/dev/ttyACM0") or None
+    """
+    if not dpg.does_item_exist(TAGS["port_combo"]):
+        return None
+
+    try:
+        selected = dpg.get_value(TAGS["port_combo"])
+        if selected and "No device" not in selected:
+            # Extract device path from "Description - /dev/path"
+            parts = selected.split(" - ")
+            if len(parts) == 2:
+                return parts[1]
+    except Exception:
+        pass
+
+    return None
+
+
+def on_refresh_clicked(sender, app_data, user_data) -> None:
+    """Callback for refresh button click with visual feedback.
+
+    Args:
+        sender: Button widget ID
+        app_data: Button data (usually None for buttons)
+        user_data: Optional user data passed from button
+    """
+    # Disable button and show feedback
+    if dpg.does_item_exist(sender):
+        dpg.configure_item(sender, enabled=False)
+
+    update_status("🔄 Scanning for devices...", [200, 200, 100])
+
+    # Force UI update
+    dpg.split_frame()
+
+    # Do refresh
+    ports_found = update_port_dropdown()
+
+    # Re-enable button and show result
+    if dpg.does_item_exist(sender):
+        dpg.configure_item(sender, enabled=True)
+
+    if ports_found:
+        update_status("✓ Refresh complete", [100, 200, 100])
+
+
+def on_port_selected(sender, app_data, user_data) -> None:
+    """Callback when user selects a port from dropdown.
+
+    Args:
+        sender: Combo widget ID
+        app_data: Selected value (display string)
+        user_data: Optional user data
+    """
+    selected_port = get_selected_port()
+    if selected_port:
+        print(f"Port selected: {selected_port}")
+        update_status(f"Selected: {selected_port}. Ready to connect.", [100, 180, 200])
 
 
 def main() -> int:
@@ -114,12 +217,11 @@ def main() -> int:
         # Configure viewport
         dpg.create_viewport(
             title="RP2040 LED Control",
-            width=400,
-            height=300,
+            width=500,
+            height=350,
             clear_color=[30, 30, 30, 255],
             decorated=True,
         )
-
 
         # Create primary window (full viewport)
         with dpg.window(
@@ -134,28 +236,46 @@ def main() -> int:
             dpg.add_separator()
             dpg.add_spacer(height=10)
 
-            # Serial port selection
+            # Serial port selection group
             dpg.add_text("Serial Port:")
-            initial_ports = find_ports()
-            port_list = initial_ports if initial_ports else ["No ports found"]
-            dpg.add_combo(
-                items=port_list,
-                tag=TAGS["port_combo"],
-                default_value=port_list[0] if port_list else "",
-                width=300,
-            )
-
-            # Refresh button
             dpg.add_spacer(height=5)
-            dpg.add_button(
-                label="Refresh Ports",
-                tag=TAGS["refresh_btn"],
-                callback=on_refresh_clicked,
-                width=150,
+
+            # Get initial ports
+            initial_ports = find_ports_with_info()
+            if initial_ports:
+                display_list = [f"{p['description']} - {p['device']}" for p in initial_ports]
+            else:
+                display_list = ["No device detected"]
+
+            # Port selection dropdown
+            dpg.add_combo(
+                items=display_list,
+                tag=TAGS["port_combo"],
+                default_value=display_list[0] if display_list else "",
+                width=-1,
+                callback=on_port_selected,
             )
 
-            dpg.add_spacer(height=20)
-            dpg.add_text("Connection controls coming soon...")
+            # Refresh button row
+            dpg.add_spacer(height=10)
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Refresh Ports",
+                    tag=TAGS["refresh_btn"],
+                    callback=on_refresh_clicked,
+                    width=-1,
+                )
+
+            # Status message area
+            dpg.add_spacer(height=15)
+            dpg.add_text(
+                tag=TAGS["status_message"],
+                default_value="Select a serial port to connect",
+                wrap=450,
+            )
+
+            dpg.add_spacer(height=15)
+            dpg.add_text("Connection controls coming soon...", color=[150, 150, 150])
 
         # Set as primary window (fills viewport)
         dpg.set_primary_window(TAGS["primary_window"], True)
@@ -163,6 +283,9 @@ def main() -> int:
         # Setup and show viewport
         dpg.setup_dearpygui()
         dpg.show_viewport()
+
+        # Initial port scan and update
+        update_port_dropdown()
 
         # Main loop
         dpg.start_dearpygui()
