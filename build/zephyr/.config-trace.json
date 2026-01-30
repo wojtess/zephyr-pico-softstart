@@ -209,6 +209,17 @@
     ]
   ],
   [
+    "CONFIG_DT_HAS_RASPBERRYPI_PICO_PWM_ENABLED",
+    "n",
+    "bool",
+    "y",
+    "default",
+    [
+      "/home/wojtess/Documents/put/pico/project1/build/Kconfig/Kconfig.dts",
+      9058
+    ]
+  ],
+  [
     "CONFIG_DT_HAS_RASPBERRYPI_PICO_RESET_ENABLED",
     "n",
     "bool",
@@ -1572,6 +1583,16 @@
     "select",
     [
       "HWINFO_RPI_PICO && SOC_FAMILY_RPI_PICO && HWINFO"
+    ]
+  ],
+  [
+    "CONFIG_PICOSDK_USE_PWM",
+    "n",
+    "bool",
+    "y",
+    "select",
+    [
+      "PWM_RPI_PICO && DT_HAS_RASPBERRYPI_PICO_PWM_ENABLED && RESET && PWM"
     ]
   ],
   [
@@ -4623,6 +4644,7 @@
     [
       "CLOCK_CONTROL_RPI_PICO && DT_HAS_RASPBERRYPI_PICO_CLOCK_CONTROLLER_ENABLED && CLOCK_CONTROL",
       "GPIO_RPI_PICO && DT_HAS_RASPBERRYPI_PICO_GPIO_PORT_ENABLED && GPIO",
+      "PWM_RPI_PICO && DT_HAS_RASPBERRYPI_PICO_PWM_ENABLED && RESET && PWM",
       "UART_PL011 && (DT_HAS_ARM_PL011_ENABLED || DT_HAS_ARM_SBSA_UART_ENABLED) && SERIAL",
       "USB_DC_RPI_PICO && DT_HAS_RASPBERRYPI_PICO_USBD_ENABLED && USB_DEVICE_DRIVER"
     ]
@@ -4768,9 +4790,123 @@
     "CONFIG_PWM",
     "y",
     "bool",
+    "y",
+    "assign",
+    [
+      "/home/wojtess/Documents/put/pico/project1/prj.conf",
+      21
+    ]
+  ],
+  [
+    "CONFIG_PWM_LOG_LEVEL_OFF",
+    "y",
+    "bool",
     null,
     "unset",
     null
+  ],
+  [
+    "CONFIG_PWM_LOG_LEVEL_ERR",
+    "y",
+    "bool",
+    null,
+    "unset",
+    null
+  ],
+  [
+    "CONFIG_PWM_LOG_LEVEL_WRN",
+    "y",
+    "bool",
+    null,
+    "unset",
+    null
+  ],
+  [
+    "CONFIG_PWM_LOG_LEVEL_INF",
+    "y",
+    "bool",
+    null,
+    "unset",
+    null
+  ],
+  [
+    "CONFIG_PWM_LOG_LEVEL_DBG",
+    "y",
+    "bool",
+    null,
+    "unset",
+    null
+  ],
+  [
+    "CONFIG_PWM_LOG_LEVEL_DEFAULT",
+    "y",
+    "bool",
+    "y",
+    "default",
+    [
+      "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/subsys/logging/Kconfig.template.log_config",
+      5
+    ]
+  ],
+  [
+    "CONFIG_PWM_LOG_LEVEL",
+    "n",
+    "int",
+    "3",
+    "default",
+    [
+      "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/subsys/logging/Kconfig.template.log_config",
+      36
+    ]
+  ],
+  [
+    "CONFIG_PWM_INIT_PRIORITY",
+    "y",
+    "int",
+    "50",
+    "default",
+    [
+      "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/pwm/Kconfig",
+      19
+    ]
+  ],
+  [
+    "CONFIG_PWM_CAPTURE",
+    "y",
+    "bool",
+    null,
+    "unset",
+    null
+  ],
+  [
+    "CONFIG_PWM_EVENT",
+    "y",
+    "bool",
+    null,
+    "unset",
+    null
+  ],
+  [
+    "CONFIG_PWM_RPI_PICO",
+    "y",
+    "bool",
+    "y",
+    "default",
+    [
+      "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/pwm/Kconfig.rpi_pico",
+      6
+    ]
+  ],
+  [
+    "CONFIG_PWM_TC_INIT_PRIORITY",
+    "y",
+    "int",
+    "50",
+    "default",
+    [
+      "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/pwm/Kconfig.sam0_tc",
+      15
+    ]
   ],
   [
     "CONFIG_RESET_INIT_PRIORITY",

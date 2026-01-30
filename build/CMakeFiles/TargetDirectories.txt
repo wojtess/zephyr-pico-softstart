@@ -194,6 +194,9 @@
 /home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/pinctrl/CMakeFiles/rebuild_cache.dir
 /home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/pinctrl/renesas/CMakeFiles/edit_cache.dir
 /home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/pinctrl/renesas/CMakeFiles/rebuild_cache.dir
+/home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/pwm/CMakeFiles/drivers__pwm.dir
+/home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/pwm/CMakeFiles/edit_cache.dir
+/home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/pwm/CMakeFiles/rebuild_cache.dir
 /home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/reset/CMakeFiles/drivers__reset.dir
 /home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/reset/CMakeFiles/edit_cache.dir
 /home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/reset/CMakeFiles/rebuild_cache.dir

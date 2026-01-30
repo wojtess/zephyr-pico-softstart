@@ -394,6 +394,25 @@ rule C_STATIC_LIBRARY_LINKER__drivers__pinctrl_
 #############################################
 # Rule for compiling C files.
 
+rule C_COMPILER__drivers__pwm_unscanned_
+  depfile = $DEP_FILE
+  deps = gcc
+  command = ccache ${LAUNCHER}${CODE_CHECK}/home/wojtess/zephyr-sdk-0.17.4/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  description = Building C object $out
+
+
+#############################################
+# Rule for linking C static library.
+
+rule C_STATIC_LIBRARY_LINKER__drivers__pwm_
+  command = $PRE_LINK && ccache /usr/bin/cmake -E rm -f $TARGET_FILE && ccache /home/wojtess/zephyr-sdk-0.17.4/arm-zephyr-eabi/bin/arm-zephyr-eabi-ar qc $TARGET_FILE $LINK_FLAGS $in && ccache /home/wojtess/zephyr-sdk-0.17.4/arm-zephyr-eabi/bin/arm-zephyr-eabi-ranlib $TARGET_FILE && $POST_BUILD
+  description = Linking C static library $TARGET_FILE
+  restat = $RESTAT
+
+
+#############################################
+# Rule for compiling C files.
+
 rule C_COMPILER__drivers__reset_unscanned_
   depfile = $DEP_FILE
   deps = gcc

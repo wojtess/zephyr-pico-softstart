@@ -822,5 +822,22 @@ pico_serial: &uart0 {};
   label = "CDC_ACM_0";
  };
 };
+
+
+&pwm {
+ pinctrl-0 = <&pwm0a_default>, <&pwm_ch4b_default>;
+ pinctrl-names = "default";
+ status = "okay";
+};
+
+
+&pinctrl {
+
+ pwm0a_default: pwm0a_default {
+  group1 {
+   pinmux = <(((16) << 5) | ((4) << 0))>;
+  };
+ };
+};
 # 0 "<command-line>" 2
 # 1 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/misc/empty_file.c"

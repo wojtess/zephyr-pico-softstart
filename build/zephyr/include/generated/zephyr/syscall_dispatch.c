@@ -139,6 +139,26 @@ uintptr_t z_mrsh_hwinfo_get_supported_reset_cause(uintptr_t arg1, uintptr_t arg2
          uintptr_t arg4, uintptr_t arg5, uintptr_t arg6, void *ssf);
 
 __weak ALIAS_OF(handler_no_syscall)
+uintptr_t z_mrsh_pwm_set_cycles(uintptr_t arg1, uintptr_t arg2, uintptr_t arg3,
+         uintptr_t arg4, uintptr_t arg5, uintptr_t arg6, void *ssf);
+
+__weak ALIAS_OF(handler_no_syscall)
+uintptr_t z_mrsh_pwm_get_cycles_per_sec(uintptr_t arg1, uintptr_t arg2, uintptr_t arg3,
+         uintptr_t arg4, uintptr_t arg5, uintptr_t arg6, void *ssf);
+
+__weak ALIAS_OF(handler_no_syscall)
+uintptr_t z_mrsh_pwm_enable_capture(uintptr_t arg1, uintptr_t arg2, uintptr_t arg3,
+         uintptr_t arg4, uintptr_t arg5, uintptr_t arg6, void *ssf);
+
+__weak ALIAS_OF(handler_no_syscall)
+uintptr_t z_mrsh_pwm_disable_capture(uintptr_t arg1, uintptr_t arg2, uintptr_t arg3,
+         uintptr_t arg4, uintptr_t arg5, uintptr_t arg6, void *ssf);
+
+__weak ALIAS_OF(handler_no_syscall)
+uintptr_t z_mrsh_pwm_capture_cycles(uintptr_t arg1, uintptr_t arg2, uintptr_t arg3,
+         uintptr_t arg4, uintptr_t arg5, uintptr_t arg6, void *ssf);
+
+__weak ALIAS_OF(handler_no_syscall)
 uintptr_t z_mrsh_reset_status(uintptr_t arg1, uintptr_t arg2, uintptr_t arg3,
          uintptr_t arg4, uintptr_t arg5, uintptr_t arg6, void *ssf);
 
@@ -735,6 +755,11 @@ const _k_syscall_handler_t _k_syscall_table[K_SYSCALL_LIMIT] = {
 	[K_SYSCALL_HWINFO_GET_RESET_CAUSE] = z_mrsh_hwinfo_get_reset_cause,
 	[K_SYSCALL_HWINFO_CLEAR_RESET_CAUSE] = z_mrsh_hwinfo_clear_reset_cause,
 	[K_SYSCALL_HWINFO_GET_SUPPORTED_RESET_CAUSE] = z_mrsh_hwinfo_get_supported_reset_cause,
+	[K_SYSCALL_PWM_SET_CYCLES] = z_mrsh_pwm_set_cycles,
+	[K_SYSCALL_PWM_GET_CYCLES_PER_SEC] = z_mrsh_pwm_get_cycles_per_sec,
+	[K_SYSCALL_PWM_ENABLE_CAPTURE] = z_mrsh_pwm_enable_capture,
+	[K_SYSCALL_PWM_DISABLE_CAPTURE] = z_mrsh_pwm_disable_capture,
+	[K_SYSCALL_PWM_CAPTURE_CYCLES] = z_mrsh_pwm_capture_cycles,
 	[K_SYSCALL_RESET_STATUS] = z_mrsh_reset_status,
 	[K_SYSCALL_RESET_LINE_ASSERT] = z_mrsh_reset_line_assert,
 	[K_SYSCALL_RESET_LINE_DEASSERT] = z_mrsh_reset_line_deassert,
