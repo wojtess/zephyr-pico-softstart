@@ -14,5 +14,19 @@
 	};
 };
 
-/* Built-in LED is already defined in rpi_pico-led.dtsi (GPIO25) */
-/* No overlay needed - just enable it if disabled */
+/* Enable PWM with pinctrl for GPIO16 (external) and GPIO25 (built-in LED) */
+&pwm {
+	pinctrl-0 = <&pwm0a_default>, <&pwm_ch4b_default>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+/* Add pinctrl configuration */
+&pinctrl {
+	/* PWM0 Channel A on GPIO16 (external PWM output) */
+	pwm0a_default: pwm0a_default {
+		group1 {
+			pinmux = <PWM_0A_P16>;
+		};
+	};
+};

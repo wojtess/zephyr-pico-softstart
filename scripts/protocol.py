@@ -7,7 +7,8 @@ Implements binary UART protocol with CRC-8.
 
 Protocol:
     Frame: [CMD][VALUE][CRC8] - 3 bytes
-    CMD 0x01 = SET LED (0=OFF, 1+=ON)
+    CMD 0x01 = SET LED (0=OFF, 1+=ON) - Legacy ON/OFF
+    CMD 0x02 = SET PWM DUTY (0-100, 0%=OFF, 100%=full)
     Response: ACK 0xFF or NACK 0xFE + error code
     CRC-8: Polynomial 0x07, Initial 0x00
 """
@@ -16,6 +17,7 @@ from typing import Tuple
 
 # Protocol constants
 CMD_SET_LED = 0x01
+CMD_SET_PWM = 0x02
 
 RESP_ACK = 0xFF
 RESP_NACK = 0xFE

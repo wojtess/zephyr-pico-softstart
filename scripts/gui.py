@@ -47,6 +47,7 @@ except ImportError as e:
 # Import protocol module
 from protocol import (
     CMD_SET_LED,
+    CMD_SET_PWM,
     RESP_ACK,
     RESP_NACK,
     build_frame,
@@ -64,6 +65,7 @@ class SerialCommand(Enum):
     CONNECT = "connect"
     DISCONNECT = "disconnect"
     SEND_LED = "send_led"
+    SEND_PWM = "send_pwm"
     CHECK_HEALTH = "check_health"
     QUIT = "quit"
 
@@ -74,6 +76,7 @@ class SerialTask:
     command: SerialCommand
     port: Optional[str] = None
     led_state: Optional[bool] = None
+    pwm_duty: Optional[int] = None
     result_queue: Optional[queue.Queue] = None
 
 
@@ -97,8 +100,13 @@ TAGS = {
     "status_message": "txt_status",
     "conn_indicator": "ind_conn",
     "led_indicator": "ind_led",
+    "pwm_slider": "slider_pwm",
+    "pwm_label": "txt_pwm_value",
     "last_response": "txt_response",
 }
+
+# Global app reference for slider callback
+_app_instance = None
 
 
 # ==========================================================================
@@ -114,6 +122,7 @@ class LEDControllerApp:
         self._lock = threading.Lock()
         self._serial_connection: Optional[serial.Serial] = None
         self._led_state: bool = False
+        self._pwm_duty: int = 0  # 0-100%
         self._is_connected: bool = False
 
         # Worker thread
@@ -156,6 +165,11 @@ class LEDControllerApp:
 
                 elif task.command == SerialCommand.SEND_LED:
                     result = self._handle_send_led(task.led_state)
+                    if task.result_queue:
+                        task.result_queue.put(result)
+
+                elif task.command == SerialCommand.SEND_PWM:
+                    result = self._handle_send_pwm(task.pwm_duty)
                     if task.result_queue:
                         task.result_queue.put(result)
 
@@ -302,7 +316,7 @@ class LEDControllerApp:
                 resp_type, err_code = parse_response(resp)
 
                 if resp_type == RESP_ACK:
-                    self._led_state = state
+                    self._led_state = state  # State update inside lock
                     return SerialResult(
                         SerialCommand.SEND_LED,
                         True,
@@ -353,6 +367,106 @@ class LEDControllerApp:
                 error=str(e)
             )
 
+    def _handle_send_pwm(self, duty: int) -> SerialResult:
+        """Handle PWM duty cycle command in worker thread."""
+        try:
+            with self._lock:
+                if not self._serial_connection or not self._serial_connection.is_open:
+                    return SerialResult(
+                        SerialCommand.SEND_PWM,
+                        False,
+                        "Not connected",
+                        error="No connection"
+                    )
+
+                # Validate duty cycle range
+                if duty < 0 or duty > 100:
+                    return SerialResult(
+                        SerialCommand.SEND_PWM,
+                        False,
+                        "Invalid duty cycle (must be 0-100)",
+                        error="Invalid value"
+                    )
+
+                # Build and send frame
+                frame = build_frame(CMD_SET_PWM, duty)
+
+                self._serial_connection.write(frame)
+                self._serial_connection.flush()
+
+                # Read response (read up to 2 bytes for ACK or NACK+error)
+                resp = self._serial_connection.read(2)
+
+                if not resp:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+                    self._pwm_duty = 0
+                    return SerialResult(
+                        SerialCommand.SEND_PWM,
+                        False,
+                        "Device not responding (timeout)",
+                        error="Timeout",
+                        led_state=None
+                    )
+
+                resp_type, err_code = parse_response(resp)
+
+                if resp_type == RESP_ACK:
+                    # Update state atomically inside lock
+                    self._pwm_duty = duty
+                    self._led_state = duty > 0
+                    return SerialResult(
+                        SerialCommand.SEND_PWM,
+                        True,
+                        f"PWM set to {duty}%",
+                        led_state=duty > 0
+                    )
+                else:  # RESP_NACK
+                    error_name = get_error_name(err_code)
+                    logger.warning(f"NACK received for PWM: {error_name}")
+                    return SerialResult(
+                        SerialCommand.SEND_PWM,
+                        False,
+                        f"PWM failed: {error_name}",
+                        error=error_name
+                    )
+
+        except serial.SerialException as e:
+            error_msg = str(e)
+            # Check for disconnection
+            if "device disconnected" in error_msg.lower() or not self._serial_connection.is_open:
+                with self._lock:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+                    self._pwm_duty = 0
+
+                logger.warning("Device disconnected during PWM command")
+                return SerialResult(
+                    SerialCommand.SEND_PWM,
+                    False,
+                    "Device disconnected",
+                    error="Disconnected"
+                )
+
+            logger.error(f"Serial error: {e}")
+            return SerialResult(
+                SerialCommand.SEND_PWM,
+                False,
+                "Communication error",
+                error=str(e)
+            )
+
+        except Exception as e:
+            logger.error(f"Unexpected error sending PWM command: {e}", exc_info=True)
+            return SerialResult(
+                SerialCommand.SEND_PWM,
+                False,
+                "Unexpected error",
+                error=str(e)
+            )
+
     def _handle_health_check(self) -> SerialResult:
         """Check if connection is still alive."""
         try:
@@ -372,7 +486,7 @@ class LEDControllerApp:
                         )
                     return SerialResult(SerialCommand.CHECK_HEALTH, True, "OK")
 
-            # Try to read DTR line to check connection
+            # Try to read CD line to check connection (inside lock)
             try:
                 dtr = self._serial_connection.getCD()  # Check Carrier Detect
                 if not dtr:
@@ -387,7 +501,7 @@ class LEDControllerApp:
                         "Connection lost",
                         error="No carrier"
                     )
-            except:
+            except Exception:
                 pass  # Not all ports support CD
 
             return SerialResult(SerialCommand.CHECK_HEALTH, True, "OK")
@@ -410,6 +524,11 @@ class LEDControllerApp:
         """Get current LED state."""
         with self._lock:
             return self._led_state
+
+    def get_pwm_duty(self) -> int:
+        """Get current PWM duty cycle."""
+        with self._lock:
+            return self._pwm_duty
 
     def send_task(self, task: SerialTask) -> queue.Queue:
         """Send task to worker thread and return result queue."""
@@ -437,7 +556,7 @@ class LEDControllerApp:
         # Send quit command to worker
         try:
             self._task_queue.put(SerialTask(command=SerialCommand.QUIT), timeout=1)
-        except:
+        except Exception:
             pass
 
         # Wait for worker to finish
@@ -741,8 +860,93 @@ def on_led_toggle_clicked(sender, app_data, user_data: LEDControllerApp) -> None
     threading.Thread(target=check_led, daemon=True).start()
 
 
+def on_pwm_changed(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Callback for PWM slider change."""
+    duty = app_data
+
+    # Update label
+    if dpg.does_item_exist(TAGS["pwm_label"]):
+        dpg.set_value(TAGS["pwm_label"], f"{duty}%")
+
+    # Send PWM command
+    task = SerialTask(command=SerialCommand.SEND_PWM, pwm_duty=duty)
+    result_queue = user_data.send_task(task)
+
+    # Check result in separate thread
+    def check_pwm():
+        try:
+            result = result_queue.get(timeout=2)
+
+            if result.success:
+                update_status(result.message, [100, 200, 100])
+                update_last_response("ACK (0xFF)")
+            else:
+                # Check if disconnected
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+
+                update_status(f"Error: {result.message}", [255, 100, 100])
+                update_last_response(f"NACK/Error: {result.error or 'Unknown'}")
+
+        except queue.Empty:
+            update_status("PWM command timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_pwm, daemon=True).start()
+
+
+# Global app reference for slider callback
+_app_instance: Optional[LEDControllerApp] = None
+
+
 def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
-    """Called every frame to check for completed operations."""
+    """Called every frame to check for completed operations and slider changes."""
+    global _app_instance
+
+    # Store app reference if not set
+    if _app_instance is None:
+        _app_instance = user_data
+
+    # Check for PWM slider changes
+    if dpg.does_item_exist(TAGS["pwm_slider"]):
+        current_slider_value = dpg.get_value(TAGS["pwm_slider"])
+        current_duty = _app_instance.get_pwm_duty()
+
+        # Send command if slider changed
+        if current_slider_value != current_duty:
+            duty = current_slider_value
+            logger.info(f"PWM slider changed to {duty}%")
+
+            # Update label
+            if dpg.does_item_exist(TAGS["pwm_label"]):
+                dpg.set_value(TAGS["pwm_label"], f"{duty}%")
+
+            # Send PWM command
+            task = SerialTask(command=SerialCommand.SEND_PWM, pwm_duty=duty)
+            result_queue = _app_instance.send_task(task)
+
+            # Check result
+            def check_pwm():
+                try:
+                    result = result_queue.get(timeout=2)
+
+                    if result.success:
+                        update_status(f"PWM set to {duty}%", [100, 200, 100])
+                        update_last_response("ACK (0xFF)")
+                    else:
+                        # Check if disconnected
+                        if result.error == "Disconnected" or result.error == "Timeout":
+                            handle_disconnect_state(_app_instance)
+
+                        update_status(f"PWM Error: {result.message}", [255, 100, 100])
+                        update_last_response(f"NACK: {result.error or 'Unknown'}")
+
+                except queue.Empty:
+                    update_status("PWM command timeout", [255, 150, 50])
+                    update_last_response("Timeout")
+
+            threading.Thread(target=check_pwm, daemon=True).start()
+
     # Check results from worker thread
     results = user_data.check_results()
 
@@ -766,8 +970,11 @@ def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
 
 def main() -> int:
     """Main application entry point."""
+    global _app_instance
+
     # Initialize app
     app = LEDControllerApp()
+    _app_instance = app
 
     # Initialize Dear PyGui context
     dpg.create_context()
@@ -777,7 +984,7 @@ def main() -> int:
         dpg.create_viewport(
             title="RP2040 LED Control",
             width=550,
-            height=500,
+            height=600,
             clear_color=[30, 30, 30, 255],
             decorated=True,
         )
@@ -862,6 +1069,30 @@ def main() -> int:
                 width=-1,
                 enabled=False,
             )
+
+            # PWM control
+            dpg.add_spacer(height=15)
+            dpg.add_text("PWM Duty Cycle:", color=[200, 200, 200])
+
+            dpg.add_spacer(height=5)
+
+            with dpg.group(horizontal=True):
+                dpg.add_slider_int(
+                    tag=TAGS["pwm_slider"],
+                    default_value=0,
+                    min_value=0,
+                    max_value=100,
+                    clamped=True,
+                    width=-1,
+                )
+
+                dpg.add_spacer(width=10)
+
+                dpg.add_text(
+                    tag=TAGS["pwm_label"],
+                    default_value="0%",
+                    color=[100, 200, 255],
+                )
 
             # Status messages
             dpg.add_spacer(height=15)
