@@ -128,6 +128,10 @@ class LEDControllerApp:
         self._worker_thread: Optional[threading.Thread] = None
         self._running: bool = False
 
+        # Health check rate limiting (max 1 check per second)
+        self._last_health_check: float = 0.0
+        self._health_check_interval: float = 1.0  # seconds
+
         # Start worker thread
         self._start_worker()
 
@@ -278,9 +282,11 @@ class LEDControllerApp:
 
     def _handle_send_led(self, state: bool) -> SerialResult:
         """Handle LED command in worker thread."""
+        logger.info(f"SEND_LED: state={state}")
         try:
             with self._lock:
                 if not self._serial_connection or not self._serial_connection.is_open:
+                    logger.warning("SEND_LED: Not connected - serial_connection is None or not open")
                     return SerialResult(
                         SerialCommand.SEND_LED,
                         False,
@@ -291,14 +297,17 @@ class LEDControllerApp:
                 # Build and send frame
                 value = 1 if state else 0
                 frame = build_frame(CMD_SET_LED, value)
+                logger.debug(f"SEND_LED: sending frame: {frame.hex()}")
 
                 self._serial_connection.write(frame)
                 self._serial_connection.flush()
 
                 # Read response (read up to 2 bytes for ACK or NACK+error)
                 resp = self._serial_connection.read(2)
+                logger.debug(f"SEND_LED: received response: {resp.hex() if resp else 'empty'}")
 
                 if not resp:
+                    logger.error("SEND_LED: No response from device")
                     self._is_connected = False
                     self._serial_connection = None
                     self._led_state = False
@@ -314,6 +323,7 @@ class LEDControllerApp:
 
                 if resp_type == RESP_ACK:
                     self._led_state = state  # State update inside lock
+                    logger.info(f"SEND_LED: ACK - LED {'ON' if state else 'OFF'}")
                     return SerialResult(
                         SerialCommand.SEND_LED,
                         True,
@@ -322,7 +332,7 @@ class LEDControllerApp:
                     )
                 else:  # RESP_NACK
                     error_name = get_error_name(err_code)
-                    logger.warning(f"NACK received: {error_name}")
+                    logger.warning(f"SEND_LED: NACK - {error_name} (err_code={err_code})")
                     return SerialResult(
                         SerialCommand.SEND_LED,
                         False,
@@ -366,9 +376,11 @@ class LEDControllerApp:
 
     def _handle_send_pwm(self, duty: int) -> SerialResult:
         """Handle PWM duty cycle command in worker thread."""
+        logger.info(f"SEND_PWM: duty={duty}%")
         try:
             with self._lock:
                 if not self._serial_connection or not self._serial_connection.is_open:
+                    logger.warning("SEND_PWM: Not connected - serial_connection is None or not open")
                     return SerialResult(
                         SerialCommand.SEND_PWM,
                         False,
@@ -378,6 +390,7 @@ class LEDControllerApp:
 
                 # Validate duty cycle range
                 if duty < 0 or duty > 100:
+                    logger.warning(f"SEND_PWM: Invalid duty cycle {duty}")
                     return SerialResult(
                         SerialCommand.SEND_PWM,
                         False,
@@ -387,14 +400,17 @@ class LEDControllerApp:
 
                 # Build and send frame
                 frame = build_frame(CMD_SET_PWM, duty)
+                logger.debug(f"SEND_PWM: sending frame: {frame.hex()}")
 
                 self._serial_connection.write(frame)
                 self._serial_connection.flush()
 
                 # Read response (read up to 2 bytes for ACK or NACK+error)
                 resp = self._serial_connection.read(2)
+                logger.debug(f"SEND_PWM: received response: {resp.hex() if resp else 'empty'}")
 
                 if not resp:
+                    logger.error("SEND_PWM: No response from device")
                     self._is_connected = False
                     self._serial_connection = None
                     self._led_state = False
@@ -413,6 +429,7 @@ class LEDControllerApp:
                     # Update state atomically inside lock
                     self._pwm_duty = duty
                     self._led_state = duty > 0
+                    logger.info(f"SEND_PWM: ACK - PWM set to {duty}%")
                     return SerialResult(
                         SerialCommand.SEND_PWM,
                         True,
@@ -421,7 +438,7 @@ class LEDControllerApp:
                     )
                 else:  # RESP_NACK
                     error_name = get_error_name(err_code)
-                    logger.warning(f"NACK received for PWM: {error_name}")
+                    logger.warning(f"SEND_PWM: NACK - {error_name} (err_code={err_code})")
                     return SerialResult(
                         SerialCommand.SEND_PWM,
                         False,
@@ -465,46 +482,40 @@ class LEDControllerApp:
             )
 
     def _handle_health_check(self) -> SerialResult:
-        """Check if connection is still alive."""
+        """Check if connection is still alive.
+
+        Note: USB CDC ACM devices don't reliably implement CD (Carrier Detect).
+        We use is_open check instead, which is sufficient for USB devices.
+        """
         try:
             with self._lock:
-                if not self._serial_connection or not self._serial_connection.is_open:
+                logger.debug("Health check: verifying connection state")
+
+                if not self._serial_connection:
+                    logger.debug("Health check: serial_connection is None")
+                    return SerialResult(SerialCommand.CHECK_HEALTH, False,
+                                       "Not connected", error="No connection")
+
+                if not self._serial_connection.is_open:
+                    logger.warning(f"Health check: serial port {self._serial_connection.port} is not open")
                     if self._is_connected:
-                        # Connection was lost
                         logger.warning("Connection lost detected during health check")
                         self._is_connected = False
-                        self._serial_connection = None
                         self._led_state = False
-                        return SerialResult(
-                            SerialCommand.CHECK_HEALTH,
-                            False,
-                            "Connection lost",
-                            error="Disconnected"
-                        )
-                    return SerialResult(SerialCommand.CHECK_HEALTH, True, "OK")
-
-            # Try to read CD line to check connection (inside lock)
-            try:
-                dtr = self._serial_connection.getCD()  # Check Carrier Detect
-                if not dtr:
-                    logger.warning("Carrier Detect lost - device disconnected")
-                    self._is_connected = False
-                    self._serial_connection.close()
                     self._serial_connection = None
-                    self._led_state = False
                     return SerialResult(
                         SerialCommand.CHECK_HEALTH,
                         False,
                         "Connection lost",
-                        error="No carrier"
+                        error="Port closed"
                     )
-            except Exception:
-                pass  # Not all ports support CD
 
-            return SerialResult(SerialCommand.CHECK_HEALTH, True, "OK")
+                # Connection is healthy
+                logger.debug(f"Health check: connection OK on {self._serial_connection.port}")
+                return SerialResult(SerialCommand.CHECK_HEALTH, True, "OK")
 
         except Exception as e:
-            logger.error(f"Health check error: {e}")
+            logger.error(f"Health check exception: {e}", exc_info=True)
             return SerialResult(
                 SerialCommand.CHECK_HEALTH,
                 False,
@@ -793,8 +804,14 @@ def on_connect_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
                     update_connection_indicator(True)
                     update_status(result.message, [100, 200, 100])
 
-                    # Start health monitoring
-                    user_data.send_task(SerialTask(command=SerialCommand.CHECK_HEALTH))
+                    # Start health monitoring after a delay (2 seconds to let connection stabilize)
+                    import time
+                    def schedule_first_health_check():
+                        time.sleep(2.0)
+                        user_data._last_health_check = time.time()
+                        user_data.send_task(SerialTask(command=SerialCommand.CHECK_HEALTH))
+                        logger.info("First health check scheduled")
+                    threading.Thread(target=schedule_first_health_check, daemon=True).start()
 
                 else:
                     update_status(f"Connection failed: {result.message}", [255, 100, 100])
@@ -947,8 +964,12 @@ def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
                 # Stop health checks
                 continue
 
-            # Schedule next health check
-            user_data.send_task(SerialTask(command=SerialCommand.CHECK_HEALTH))
+            # Schedule next health check with rate limiting (max 1 per second)
+            import time
+            current_time = time.time()
+            if current_time - user_data._last_health_check >= user_data._health_check_interval:
+                user_data._last_health_check = current_time
+                user_data.send_task(SerialTask(command=SerialCommand.CHECK_HEALTH))
 
 
 # ==========================================================================
