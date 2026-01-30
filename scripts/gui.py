@@ -302,11 +302,9 @@ class LEDControllerApp:
                 self._serial_connection.write(frame)
                 self._serial_connection.flush()
 
-                # Read response (read up to 2 bytes for ACK or NACK+error)
-                resp = self._serial_connection.read(2)
-                logger.debug(f"SEND_LED: received response: {resp.hex() if resp else 'empty'}")
-
-                if not resp:
+                # Read response: 1 byte first (ACK or NACK), then read error code if NACK
+                resp_type_byte = self._serial_connection.read(1)
+                if not resp_type_byte:
                     logger.error("SEND_LED: No response from device")
                     self._is_connected = False
                     self._serial_connection = None
@@ -319,7 +317,16 @@ class LEDControllerApp:
                         led_state=None
                     )
 
-                resp_type, err_code = parse_response(resp)
+                resp_type = resp_type_byte[0]
+                err_code = 0
+
+                # If NACK, read error code byte
+                if resp_type == RESP_NACK:
+                    err_byte = self._serial_connection.read(1)
+                    if err_byte:
+                        err_code = err_byte[0]
+
+                logger.debug(f"SEND_LED: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
 
                 if resp_type == RESP_ACK:
                     self._led_state = state  # State update inside lock
@@ -405,11 +412,9 @@ class LEDControllerApp:
                 self._serial_connection.write(frame)
                 self._serial_connection.flush()
 
-                # Read response (read up to 2 bytes for ACK or NACK+error)
-                resp = self._serial_connection.read(2)
-                logger.debug(f"SEND_PWM: received response: {resp.hex() if resp else 'empty'}")
-
-                if not resp:
+                # Read response: 1 byte first (ACK or NACK), then read error code if NACK
+                resp_type_byte = self._serial_connection.read(1)
+                if not resp_type_byte:
                     logger.error("SEND_PWM: No response from device")
                     self._is_connected = False
                     self._serial_connection = None
@@ -423,7 +428,16 @@ class LEDControllerApp:
                         led_state=None
                     )
 
-                resp_type, err_code = parse_response(resp)
+                resp_type = resp_type_byte[0]
+                err_code = 0
+
+                # If NACK, read error code byte
+                if resp_type == RESP_NACK:
+                    err_byte = self._serial_connection.read(1)
+                    if err_byte:
+                        err_code = err_byte[0]
+
+                logger.debug(f"SEND_PWM: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
 
                 if resp_type == RESP_ACK:
                     # Update state atomically inside lock
