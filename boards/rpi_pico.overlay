@@ -5,6 +5,12 @@
 	chosen {
 		zephyr,console = &cdc_acm_uart0;
 	};
+
+	/* ADC node for analog input on GPIO26 (ADC0) */
+	adc_io: adc_io {
+		compatible = "gpio-keys";
+		label = "ADC_IO";
+	};
 };
 
 &zephyr_udc0 {
@@ -21,6 +27,14 @@
 	status = "okay";
 };
 
+/* Enable ADC for reading analog values on GPIO26 (ADC0) */
+&adc {
+	status = "okay";
+	#io-channel-cells = <1>;
+	pinctrl-0 = <&adc_default>;
+	pinctrl-names = "default";
+};
+
 /* Add pinctrl configuration */
 &pinctrl {
 	/* PWM0 Channel A on GPIO16 (external PWM output) */
@@ -28,5 +42,11 @@
 		group1 {
 			pinmux = <PWM_0A_P16>;
 		};
+	};
+
+	/* ADC on GPIO26 (ADC channel 0) */
+	adc_default: adc_default {
+		pins = "gpio26";
+		function = "adc0";
 	};
 };

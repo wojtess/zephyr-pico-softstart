@@ -8,23 +8,28 @@
  * **Hardware Platform:**
  *   - MCU: RP2040 (Raspberry Pi Pico)
  *   - LED: GPIO25 (built-in LED, PWM capable)
+ *   - ADC Input: GPIO26 (ADC channel 0) - for analog sensor reading
  *   - Communication: USB CDC ACM (virtual serial port)
  *
  * **Binary Protocol Specification:**
  *   - Frame Format: [CMD][VALUE][CRC8] (3 bytes)
  *   - CMD 0x01: SET LED (0=OFF, 1+=ON) - Legacy ON/OFF
  *   - CMD 0x02: SET PWM DUTY (0-100, 0%=OFF, 100%=full brightness)
+ *   - CMD 0x03: READ ADC - Request ADC reading, response: [0x03][ADC_H][ADC_L][CRC8]
+ *     - ADC_H: High byte of ADC value (0-3.3V maps to 0-4095, 12-bit)
+ *     - ADC_L: Low byte of ADC value
  *   - Response: ACK 0xFF or NACK 0xFE + error code
  *   - CRC-8: Polynomial 0x07, Initial 0x00
  *
  * **Project Roadmap:**
  *   1. LED ON/OFF control (legacy)
  *   2. PWM duty cycle control (current implementation)
- *   3. Softstart with current regulation (1% accuracy)
+ *   3. ADC analog input reading (current implementation)
+ *   4. Softstart with current regulation (1% accuracy)
  *
  * @author Project Team
- * @version 0.2.0
- * @date 2026-01-26
+ * @version 0.3.0
+ * @date 2026-01-30
  */
 
 #include <zephyr/kernel.h>
@@ -32,10 +37,12 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/pwm.h>
+#include <zephyr/drivers/adc.h>
 #include <zephyr/usb/usb_device.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/spinlock.h>
+#include <zephyr/sys/__assert.h>
 
 /* =========================================================================
  * CONSTANTS AND DEFINITIONS
@@ -56,6 +63,12 @@
 /** @brief PWM frequency in Hz */
 #define PWM_FREQ 1000
 
+/** @brief ADC device node from device tree */
+#define ADC_NODE DT_NODELABEL(adc)
+
+/** @brief ADC channel for GPIO26 (ADC0) */
+#define ADC_CHANNEL_0 0
+
 /* -------------------------------------------------------------------------
  * Protocol Constants
  * ------------------------------------------------------------------------- */
@@ -64,6 +77,9 @@
 
 /** @brief Command byte for PWM duty cycle control */
 #define CMD_SET_PWM      0x02
+
+/** @brief Command byte for ADC read request */
+#define CMD_READ_ADC     0x03
 
 /** @brief Positive response (ACK) */
 #define RESP_ACK         0xFF
@@ -93,9 +109,10 @@
  * @brief Protocol state machine states
  */
 enum proto_state {
-	STATE_WAIT_CMD,    /**< Waiting for command byte */
-	STATE_WAIT_VALUE,  /**< Waiting for value byte */
-	STATE_WAIT_CRC,    /**< Waiting for CRC byte */
+	STATE_WAIT_CMD,     /**< Waiting for command byte */
+	STATE_WAIT_VALUE,   /**< Waiting for value byte */
+	STATE_WAIT_CRC,     /**< Waiting for CRC byte (3-byte frame) */
+	STATE_WAIT_CRC_ADC, /**< Waiting for CRC byte (2-byte frame for ADC) */
 };
 
 /* =========================================================================
@@ -113,6 +130,9 @@ static const struct device *uart_dev;
 
 /** @brief Cached PWM device pointer */
 static const struct device *pwm_dev;
+
+/** @brief Cached ADC device pointer */
+static const struct device *adc_dev;
 
 /** @brief GPIO pin specification for LED from device tree */
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED_NODE, gpios);
@@ -272,14 +292,79 @@ static int set_pwm_duty(uint8_t duty)
 }
 
 /* =========================================================================
+ * ADC READ FUNCTION
+ * ========================================================================= */
+
+/**
+ * @brief Read ADC value from GPIO26 (ADC channel 0)
+ *
+ * @details Reads 12-bit ADC value (0-4095) from ADC channel 0.
+ *          RP2040 ADC: 0V = 0, 3.3V = 4095
+ *
+ * @return ADC value (0-4095), or negative on error
+ */
+static int read_adc_channel0(void)
+{
+	int ret;
+	uint16_t adc_value = 0;
+	int16_t sample_buffer;
+
+	/* Verify ADC device is ready */
+	if (!device_is_ready(adc_dev)) {
+		printk("ERROR: ADC device not ready\n");
+		return -1;
+	}
+
+	/* Setup ADC sequence for single channel */
+	struct adc_sequence sequence = {
+		.channels = BIT(ADC_CHANNEL_0),
+		.buffer = &sample_buffer,
+		.buffer_size = sizeof(sample_buffer),
+		.resolution = 12,  /* 12-bit resolution (0-4095) */
+	};
+
+	/* Read ADC */
+	ret = adc_read(adc_dev, &sequence);
+	if (ret != 0) {
+		printk("ADC read failed: %d\n", ret);
+		return ret;
+	}
+
+	adc_value = sample_buffer;
+	printk("ADC read: %d (raw)\n", adc_value);
+
+	return adc_value;
+}
+
+/**
+ * @brief Send ADC reading as response
+ *
+ * @details Sends [CMD][ADC_H][ADC_L][CRC8] response
+ *
+ * @param adc_value 12-bit ADC value (0-4095)
+ */
+static void send_adc_response(uint16_t adc_value)
+{
+	uint8_t response[4];
+
+	response[0] = CMD_READ_ADC;
+	response[1] = (adc_value >> 8) & 0xFF;  /* High byte */
+	response[2] = adc_value & 0xFF;         /* Low byte */
+	response[3] = crc8(response, 3);
+
+	uart_fifo_fill(uart_dev, response, sizeof(response));
+}
+
+/* =========================================================================
  * PROTOCOL STATE MACHINE
  * ========================================================================= */
 
 /**
  * @brief Process received byte through protocol state machine
  *
- * @details Implements 3-state protocol parser:
- *          WAIT_CMD -> WAIT_VALUE -> WAIT_CRC -> execute command
+ * @details Implements protocol parser with support for:
+ *          - 3-byte commands: [CMD][VALUE][CRC8] (SET_LED, SET_PWM)
+ *          - 2-byte commands: [CMD][CRC8] (READ_ADC)
  *
  * @param byte Received byte from UART
  */
@@ -291,6 +376,10 @@ static void process_byte(uint8_t byte)
 			frame_buf[0] = byte;
 			proto_state = STATE_WAIT_VALUE;
 		}
+		else if (byte == CMD_READ_ADC) {
+			frame_buf[0] = byte;
+			proto_state = STATE_WAIT_CRC_ADC;  /* Different state for ADC */
+		}
 		/* Unknown command - ignore */
 		break;
 
@@ -301,7 +390,7 @@ static void process_byte(uint8_t byte)
 
 	case STATE_WAIT_CRC:
 	{
-		/* Verify CRC */
+		/* Verify CRC for 3-byte frame [CMD][VALUE][CRC] */
 		uint8_t calculated_crc = crc8(frame_buf, 2);
 		if (byte != calculated_crc) {
 			send_response(RESP_NACK);
@@ -322,6 +411,30 @@ static void process_byte(uint8_t byte)
 				send_response(RESP_NACK);
 				send_response(ERR_INVALID_VAL);
 			}
+		}
+
+		proto_state = STATE_WAIT_CMD;
+		break;
+	}
+
+	case STATE_WAIT_CRC_ADC:
+	{
+		/* Verify CRC for 2-byte frame [CMD][CRC] */
+		uint8_t calculated_crc = crc8(&frame_buf[0], 1);
+		if (byte != calculated_crc) {
+			send_response(RESP_NACK);
+			send_response(ERR_CRC);
+			proto_state = STATE_WAIT_CMD;
+			break;
+		}
+
+		/* Execute ADC read command */
+		int adc_value = read_adc_channel0();
+		if (adc_value >= 0) {
+			send_adc_response(adc_value);
+		} else {
+			send_response(RESP_NACK);
+			send_response(ERR_INVALID_CMD);  /* ADC error */
 		}
 
 		proto_state = STATE_WAIT_CMD;
@@ -451,6 +564,7 @@ int main(void)
 	/* Get device pointers */
 	uart_dev = DEVICE_DT_GET(UART_NODE);
 	pwm_dev = DEVICE_DT_GET(PWM_DEV_NODE);
+	adc_dev = DEVICE_DT_GET(ADC_NODE);
 
 	/* Verify UART is ready */
 	if (!device_is_ready(uart_dev)) {
@@ -463,6 +577,13 @@ int main(void)
 		printk("ERROR: PWM device not ready\n");
 		return 0;
 	}
+
+	/* Verify ADC is ready */
+	if (!device_is_ready(adc_dev)) {
+		printk("ERROR: ADC device not ready\n");
+		return 0;
+	}
+	printk("ADC initialized on GPIO26 (ADC0)\n");
 
 	/* Configure LED GPIO */
 	if (!gpio_is_ready_dt(&led)) {
@@ -480,12 +601,14 @@ int main(void)
 	}
 
 	printk("===================================\n");
-	printk("RP2040 PWM LED Control\n");
+	printk("RP2040 PWM LED + ADC Control\n");
 	printk("LED: GPIO25 (built-in)\n");
 	printk("PWM: 1kHz frequency\n");
+	printk("ADC: GPIO26 (12-bit, 0-3.3V)\n");
 	printk("Protocol: [CMD][VALUE][CRC8]\n");
 	printk("  0x01 <val> <crc>  -> Set LED (0=OFF, 1+=ON)\n");
 	printk("  0x02 <0-100> <crc> -> Set PWM duty (0=OFF, 100=full)\n");
+	printk("  0x03 <crc>        -> Read ADC (returns [0x03][ADC_H][ADC_L][CRC])\n");
 	printk("  Response: 0xFF=OK, 0xFE=ERR\n");
 	printk("===================================\n\n");
 
