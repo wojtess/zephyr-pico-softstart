@@ -105,9 +105,6 @@ TAGS = {
     "last_response": "txt_response",
 }
 
-# Global app reference for slider callback
-_app_instance = None
-
 
 # ==========================================================================
 # MAIN APPLICATION CLASS
@@ -721,7 +718,7 @@ def on_refresh_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
 def on_port_selected(sender, app_data, user_data: LEDControllerApp) -> None:
     """Callback when user selects a port from dropdown."""
     selected_port = get_selected_port()
-    if selected_port and not app.is_connected():
+    if selected_port and not user_data.is_connected():
         update_status(f"Selected: {selected_port}. Press Connect.", [100, 180, 200])
 
 
@@ -731,20 +728,20 @@ def on_connect_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
         update_status("pyserial not installed!", [255, 100, 100])
         return
 
-    if app.is_connected():
+    if user_data.is_connected():
         # Disconnect
         update_status("Disconnecting...", [200, 200, 100])
         dpg.split_frame()
 
         task = SerialTask(command=SerialCommand.DISCONNECT)
-        result_queue = app.send_task(task)
+        result_queue = user_data.send_task(task)
 
         # Check result after short delay
         def check_disconnect():
             try:
                 result = result_queue.get(timeout=2)
                 if result.success:
-                    handle_disconnect_state(app)
+                    handle_disconnect_state(user_data)
                     update_status("Disconnected", [150, 180, 150])
                 else:
                     update_status(f"Disconnect error: {result.message}", [255, 100, 100])
@@ -768,7 +765,7 @@ def on_connect_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
         dpg.split_frame()
 
         task = SerialTask(command=SerialCommand.CONNECT, port=port)
-        result_queue = app.send_task(task)
+        result_queue = user_data.send_task(task)
 
         # Check result in separate thread
         def check_connect():
@@ -797,7 +794,7 @@ def on_connect_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
                     update_status(result.message, [100, 200, 100])
 
                     # Start health monitoring
-                    app.send_task(SerialTask(command=SerialCommand.CHECK_HEALTH))
+                    user_data.send_task(SerialTask(command=SerialCommand.CHECK_HEALTH))
 
                 else:
                     update_status(f"Connection failed: {result.message}", [255, 100, 100])
@@ -816,13 +813,13 @@ def on_led_toggle_clicked(sender, app_data, user_data: LEDControllerApp) -> None
     if dpg.does_item_exist(sender):
         dpg.configure_item(sender, enabled=False)
 
-    new_state = not app.get_led_state()
+    new_state = not user_data.get_led_state()
 
     update_status(f"Turning LED {'ON' if new_state else 'OFF'}...", [200, 200, 100])
     dpg.split_frame()
 
     task = SerialTask(command=SerialCommand.SEND_LED, led_state=new_state)
-    result_queue = app.send_task(task)
+    result_queue = user_data.send_task(task)
 
     # Check result in separate thread
     def check_led():
@@ -846,7 +843,7 @@ def on_led_toggle_clicked(sender, app_data, user_data: LEDControllerApp) -> None
             else:
                 # Check if disconnected
                 if result.error == "Disconnected" or result.error == "Timeout":
-                    handle_disconnect_state(app)
+                    handle_disconnect_state(user_data)
 
                 update_status(f"Error: {result.message}", [255, 100, 100])
                 update_last_response(f"NACK/Error: {result.error or 'Unknown'}")
@@ -895,22 +892,12 @@ def on_pwm_changed(sender, app_data, user_data: LEDControllerApp) -> None:
     threading.Thread(target=check_pwm, daemon=True).start()
 
 
-# Global app reference for slider callback
-_app_instance: Optional[LEDControllerApp] = None
-
-
 def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
     """Called every frame to check for completed operations and slider changes."""
-    global _app_instance
-
-    # Store app reference if not set
-    if _app_instance is None:
-        _app_instance = user_data
-
     # Check for PWM slider changes
     if dpg.does_item_exist(TAGS["pwm_slider"]):
         current_slider_value = dpg.get_value(TAGS["pwm_slider"])
-        current_duty = _app_instance.get_pwm_duty()
+        current_duty = user_data.get_pwm_duty()
 
         # Send command if slider changed
         if current_slider_value != current_duty:
@@ -923,7 +910,7 @@ def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
 
             # Send PWM command
             task = SerialTask(command=SerialCommand.SEND_PWM, pwm_duty=duty)
-            result_queue = _app_instance.send_task(task)
+            result_queue = user_data.send_task(task)
 
             # Check result
             def check_pwm():
@@ -936,7 +923,7 @@ def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
                     else:
                         # Check if disconnected
                         if result.error == "Disconnected" or result.error == "Timeout":
-                            handle_disconnect_state(_app_instance)
+                            handle_disconnect_state(user_data)
 
                         update_status(f"PWM Error: {result.message}", [255, 100, 100])
                         update_last_response(f"NACK: {result.error or 'Unknown'}")
@@ -970,11 +957,8 @@ def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
 
 def main() -> int:
     """Main application entry point."""
-    global _app_instance
-
     # Initialize app
     app = LEDControllerApp()
-    _app_instance = app
 
     # Initialize Dear PyGui context
     dpg.create_context()
@@ -1018,7 +1002,8 @@ def main() -> int:
                 tag=TAGS["port_combo"],
                 default_value=display_list[0] if display_list else "",
                 width=-1,
-                callback=lambda s, d, a=app: on_port_selected(s, d, a),
+                callback=on_port_selected,
+                user_data=app,
             )
 
             # Connection buttons
@@ -1027,7 +1012,8 @@ def main() -> int:
                 dpg.add_button(
                     label="Refresh",
                     tag=TAGS["refresh_btn"],
-                    callback=lambda s, d, a=app: on_refresh_clicked(s, d, a),
+                    callback=on_refresh_clicked,
+                    user_data=app,
                     width=120,
                 )
 
@@ -1036,7 +1022,8 @@ def main() -> int:
                 dpg.add_button(
                     label="Connect",
                     tag=TAGS["connect_btn"],
-                    callback=lambda s, d, a=app: on_connect_clicked(s, d, a),
+                    callback=on_connect_clicked,
+                    user_data=app,
                     width=-1,
                 )
 
@@ -1065,7 +1052,8 @@ def main() -> int:
             dpg.add_button(
                 label="Turn LED ON",
                 tag=TAGS["led_btn"],
-                callback=lambda s, d, a=app: on_led_toggle_clicked(s, d, a),
+                callback=on_led_toggle_clicked,
+                user_data=app,
                 width=-1,
                 enabled=False,
             )
@@ -1120,7 +1108,7 @@ def main() -> int:
         dpg.show_viewport()
 
         # Register frame callback for result checking
-        dpg.set_frame_callback(0, lambda s, d, a=app: on_frame_callback(s, d, a))
+        dpg.set_frame_callback(0, on_frame_callback, user_data=app)
 
         # Initial port scan
         ports = find_ports_with_info()
