@@ -923,47 +923,55 @@ def on_pwm_changed(sender, app_data, user_data: LEDControllerApp) -> None:
     threading.Thread(target=check_pwm, daemon=True).start()
 
 
+def on_pwm_slider_changed(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Callback for PWM slider value changes."""
+    duty = app_data  # app_data contains the new slider value
+    logger.info(f"PWM slider changed to {duty}%")
+
+    # Update label
+    if dpg.does_item_exist(TAGS["pwm_label"]):
+        dpg.set_value(TAGS["pwm_label"], f"{duty}%")
+
+    # Send PWM command
+    task = SerialTask(command=SerialCommand.SEND_PWM, pwm_duty=duty)
+    result_queue = user_data.send_task(task)
+
+    # Check result in background thread
+    def check_pwm():
+        try:
+            result = result_queue.get(timeout=2)
+
+            if result.success:
+                update_status(f"PWM set to {duty}%", [100, 200, 100])
+                update_last_response("ACK (0xFF)")
+            else:
+                # Check if disconnected
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+
+                update_status(f"PWM Error: {result.message}", [255, 100, 100])
+                update_last_response(f"NACK: {result.error or 'Unknown'}")
+                # Revert slider to last known good value
+                if dpg.does_item_exist(TAGS["pwm_slider"]):
+                    dpg.set_value(TAGS["pwm_slider"], user_data.get_pwm_duty())
+                    if dpg.does_item_exist(TAGS["pwm_label"]):
+                        dpg.set_value(TAGS["pwm_label"], f"{user_data.get_pwm_duty()}%")
+
+        except queue.Empty:
+            update_status("PWM command timeout", [255, 150, 50])
+            update_last_response("Timeout")
+            # Revert slider to last known good value
+            if dpg.does_item_exist(TAGS["pwm_slider"]):
+                dpg.set_value(TAGS["pwm_slider"], user_data.get_pwm_duty())
+                if dpg.does_item_exist(TAGS["pwm_label"]):
+                    dpg.set_value(TAGS["pwm_label"], f"{user_data.get_pwm_duty()}%")
+
+    threading.Thread(target=check_pwm, daemon=True).start()
+
+
 def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
-    """Called every frame to check for completed operations and slider changes."""
-    # Check for PWM slider changes
-    if dpg.does_item_exist(TAGS["pwm_slider"]):
-        current_slider_value = dpg.get_value(TAGS["pwm_slider"])
-        current_duty = user_data.get_pwm_duty()
-
-        # Send command if slider changed
-        if current_slider_value != current_duty:
-            duty = current_slider_value
-            logger.info(f"PWM slider changed to {duty}%")
-
-            # Update label
-            if dpg.does_item_exist(TAGS["pwm_label"]):
-                dpg.set_value(TAGS["pwm_label"], f"{duty}%")
-
-            # Send PWM command
-            task = SerialTask(command=SerialCommand.SEND_PWM, pwm_duty=duty)
-            result_queue = user_data.send_task(task)
-
-            # Check result
-            def check_pwm():
-                try:
-                    result = result_queue.get(timeout=2)
-
-                    if result.success:
-                        update_status(f"PWM set to {duty}%", [100, 200, 100])
-                        update_last_response("ACK (0xFF)")
-                    else:
-                        # Check if disconnected
-                        if result.error == "Disconnected" or result.error == "Timeout":
-                            handle_disconnect_state(user_data)
-
-                        update_status(f"PWM Error: {result.message}", [255, 100, 100])
-                        update_last_response(f"NACK: {result.error or 'Unknown'}")
-
-                except queue.Empty:
-                    update_status("PWM command timeout", [255, 150, 50])
-                    update_last_response("Timeout")
-
-            threading.Thread(target=check_pwm, daemon=True).start()
+    """Called every frame to check for health check results."""
+    # Note: PWM slider now uses direct callback instead of polling
 
     # Check results from worker thread
     results = user_data.check_results()
@@ -1107,6 +1115,8 @@ def main() -> int:
                     max_value=100,
                     clamped=True,
                     width=-1,
+                    callback=on_pwm_slider_changed,
+                    user_data=app,
                 )
 
                 dpg.add_spacer(width=10)
@@ -1142,8 +1152,8 @@ def main() -> int:
         dpg.setup_dearpygui()
         dpg.show_viewport()
 
-        # Register frame callback for result checking
-        dpg.set_frame_callback(0, on_frame_callback, user_data=app)
+        # Register frame callback for result checking (runs every frame)
+        dpg.set_frame_callback(-1, on_frame_callback, user_data=app)
 
         # Initial port scan
         ports = find_ports_with_info()
