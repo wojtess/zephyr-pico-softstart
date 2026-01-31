@@ -48,6 +48,7 @@
 #include "modules/drivers/led_pwm.h"
 #include "modules/drivers/adc_ctrl.h"
 #include "modules/tx_buffer/tx_buffer.h"
+#include "modules/threads/tx_thread.h"
 
 /* =========================================================================
  * CONSTANTS AND DEFINITIONS
@@ -108,6 +109,9 @@ static uint8_t tx_buf_data[TX_BUF_SIZE];
 
 /** @brief TX ring buffer instance */
 static struct tx_buffer g_tx_buf;
+
+/** @brief TX thread context */
+static struct tx_thread_ctx g_tx_thread;
 
 /** @brief Protocol context with state machine and callbacks */
 static struct proto_ctx g_proto;
@@ -247,23 +251,6 @@ static void process_ring_buffer(void)
 	}
 }
 
-/**
- * @brief Process TX buffer (main loop context)
- *
- * @details Drains TX buffer to UART. Will be replaced by TX thread in Phase 8.
- */
-static void process_tx_buffer(void)
-{
-	uint8_t data[16];
-	size_t len;
-
-	/* Drain up to 16 bytes at a time */
-	len = tx_buffer_get(&g_tx_buf, data, sizeof(data));
-	if (len > 0) {
-		uart_fifo_fill(uart_dev, data, len);
-	}
-}
-
 /* =========================================================================
  * MAIN
  * ========================================================================= */
@@ -330,6 +317,12 @@ int main(void)
 		return 0;
 	}
 
+	/* Start TX thread */
+	if (tx_thread_start(&g_tx_thread, &g_tx_buf, uart_dev) != 0) {
+		printk("ERROR: Failed to start TX thread\n");
+		return 0;
+	}
+
 	/* Initialize protocol context */
 	proto_init(&g_proto);
 
@@ -366,7 +359,6 @@ int main(void)
 	/* Main loop */
 	while (true) {
 		process_ring_buffer();
-		process_tx_buffer();
 		k_sleep(K_MSEC(10));
 	}
 

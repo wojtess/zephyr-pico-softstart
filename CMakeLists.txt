@@ -11,4 +11,5 @@ target_sources(app PRIVATE
     src/modules/drivers/led_pwm.c
     src/modules/drivers/adc_ctrl.c
     src/modules/tx_buffer/tx_buffer.c
+    src/modules/threads/tx_thread.c
 )
