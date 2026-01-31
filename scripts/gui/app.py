@@ -245,6 +245,32 @@ class LEDControllerApp:
                 elif task.command == SerialCommand.CHECK_HEALTH:
                     result = self._handle_health_check()
 
+                # After handler completes, check for leftover bytes in response queue
+                # This detects command collisions, double responses, or other protocol errors
+                leftover_count = 0
+                leftover_bytes = []
+                while not self._response_queue.empty():
+                    try:
+                        b = self._response_queue.get_nowait()
+                        leftover_count += 1
+                        leftover_bytes.append(f"0x{b:02X}")
+                    except queue.Empty:
+                        break
+
+                if leftover_count > 0:
+                    logger.error(
+                        f"Response queue has {leftover_count} leftover bytes after command: {', '.join(leftover_bytes)}"
+                    )
+                    # Override result with error if command succeeded
+                    if result and result.success:
+                        logger.warning(f"Overriding successful result due to leftover bytes in queue")
+                        result = SerialResult(
+                            task.command,
+                            False,
+                            f"Protocol error: {leftover_count} extra bytes after response",
+                            error="Leftover bytes"
+                        )
+
                 # Clear processing task
                 with self._lock:
                     self._processing_task = None
@@ -380,14 +406,6 @@ class LEDControllerApp:
                 self._serial_connection.write(frame)
                 self._serial_connection.flush()
 
-            # Wait for response from data reader (via response queue)
-            # Clear any old responses first
-            while not self._response_queue.empty():
-                try:
-                    self._response_queue.get_nowait()
-                except queue.Empty:
-                    break
-
             # Wait for response with timeout
             try:
                 resp_type = self._response_queue.get(timeout=2.0)
@@ -502,12 +520,6 @@ class LEDControllerApp:
                 self._serial_connection.flush()
 
             # Wait for response from data reader
-            while not self._response_queue.empty():
-                try:
-                    self._response_queue.get_nowait()
-                except queue.Empty:
-                    break
-
             try:
                 resp_type = self._response_queue.get(timeout=2.0)
             except queue.Empty:
