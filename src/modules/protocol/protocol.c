@@ -66,6 +66,7 @@ void proto_init(struct proto_ctx *ctx)
 	ctx->on_stream_stop = NULL;
 	ctx->send_resp = NULL;
 	ctx->send_adc_resp = NULL;
+	ctx->send_debug = NULL;
 }
 
 /* =========================================================================
@@ -279,4 +280,24 @@ void proto_process_byte(struct proto_ctx *ctx, uint8_t byte)
 		ctx->state = PROTO_STATE_WAIT_CMD;
 		break;
 	}
+}
+
+/* =========================================================================
+ * DEBUG PACKET HELPERS
+ * ========================================================================= */
+
+/**
+ * @brief Send debug packet via protocol
+ *
+ * @details Sends 2-byte debug packet: [DEBUG_MARKER][CODE]
+ *
+ * @param ctx Protocol context
+ * @param debug_code Debug code (1-255)
+ */
+void proto_send_debug(struct proto_ctx *ctx, uint8_t debug_code)
+{
+	if (!ctx || !ctx->send_debug) {
+		return;
+	}
+	ctx->send_debug(debug_code);
 }

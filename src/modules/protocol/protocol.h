@@ -37,6 +37,9 @@
 /** @brief Negative response (NACK) */
 #define PROTO_RESP_NACK        0xFE
 
+/** @brief Debug response marker */
+#define PROTO_RESP_DEBUG       0xFD
+
 /** @brief Error code: CRC mismatch */
 #define PROTO_ERR_CRC          0x01
 
@@ -122,6 +125,13 @@ typedef void (*proto_send_resp_cb)(uint8_t resp);
  */
 typedef void (*proto_send_adc_resp_cb)(uint8_t cmd, uint8_t adc_h, uint8_t adc_l, uint8_t crc);
 
+/**
+ * @brief Callback type for sending debug packet
+ *
+ * @param debug_code Debug code (1-255)
+ */
+typedef void (*proto_send_debug_cb)(uint8_t debug_code);
+
 /* =========================================================================
  * PROTOCOL CONTEXT
  * ========================================================================= */
@@ -159,6 +169,9 @@ struct proto_ctx {
 
 	/** Callback: Send ADC response */
 	proto_send_adc_resp_cb send_adc_resp;
+
+	/** Callback: Send debug packet */
+	proto_send_debug_cb send_debug;
 };
 
 /* =========================================================================
@@ -200,5 +213,15 @@ void proto_process_byte(struct proto_ctx *ctx, uint8_t byte);
  * @return CRC-8 checksum (0-255)
  */
 uint8_t proto_crc8(const uint8_t *data, size_t len);
+
+/**
+ * @brief Send debug packet via protocol
+ *
+ * @details Sends 2-byte debug packet: [DEBUG_MARKER][CODE]
+ *
+ * @param ctx Protocol context
+ * @param debug_code Debug code (1-255)
+ */
+void proto_send_debug(struct proto_ctx *ctx, uint8_t debug_code);
 
 #endif /* PROTOCOL_H */
