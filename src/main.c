@@ -44,6 +44,7 @@
 #include <zephyr/spinlock.h>
 #include <zephyr/sys/__assert.h>
 #include "modules/ringbuf/ringbuf.h"
+#include "modules/protocol/protocol.h"
 
 /* =========================================================================
  * CONSTANTS AND DEFINITIONS
@@ -71,50 +72,10 @@
 #define ADC_CHANNEL_0 0
 
 /* -------------------------------------------------------------------------
- * Protocol Constants
- * ------------------------------------------------------------------------- */
-/** @brief Command byte for LED ON/OFF control (legacy) */
-#define CMD_SET_LED      0x01
-
-/** @brief Command byte for PWM duty cycle control */
-#define CMD_SET_PWM      0x02
-
-/** @brief Command byte for ADC read request */
-#define CMD_READ_ADC     0x03
-
-/** @brief Positive response (ACK) */
-#define RESP_ACK         0xFF
-
-/** @brief Negative response (NACK) */
-#define RESP_NACK        0xFE
-
-/** @brief Error code: CRC mismatch */
-#define ERR_CRC          0x01
-
-/** @brief Error code: Invalid command */
-#define ERR_INVALID_CMD  0x02
-
-/** @brief Error code: Invalid value */
-#define ERR_INVALID_VAL  0x03
-
-/* -------------------------------------------------------------------------
  * Buffer Sizes
  * ------------------------------------------------------------------------- */
 /** @brief UART RX ring buffer size in bytes */
 #define RX_BUF_SIZE  32
-
-/* -------------------------------------------------------------------------
- * Protocol State Machine
- * ------------------------------------------------------------------------- */
-/**
- * @brief Protocol state machine states
- */
-enum proto_state {
-	STATE_WAIT_CMD,     /**< Waiting for command byte */
-	STATE_WAIT_VALUE,   /**< Waiting for value byte */
-	STATE_WAIT_CRC,     /**< Waiting for CRC byte (3-byte frame) */
-	STATE_WAIT_CRC_ADC, /**< Waiting for CRC byte (2-byte frame for ADC) */
-};
 
 /* =========================================================================
  * GLOBAL VARIABLES
@@ -148,51 +109,79 @@ static uint8_t rx_buf_data[RX_BUF_SIZE];
 /** @brief RX ring buffer instance */
 static struct ringbuf g_rx_buf;
 
-/** @brief Current protocol state machine state */
-static enum proto_state proto_state = STATE_WAIT_CMD;
-
-/** @brief Frame buffer for storing CMD + VALUE */
-static uint8_t frame_buf[2];
+/** @brief Protocol context with state machine and callbacks */
+static struct proto_ctx g_proto;
 
 /* =========================================================================
  * FUNCTION PROTOTYPES
  * ========================================================================= */
 
-/**
- * @brief Calculate CRC-8 checksum
- *
- * @details Uses polynomial 0x07 with initial value 0x00.
- *          This is used to verify integrity of protocol frames.
- *
- * @param data Input data buffer
- * @param len Length of data in bytes
- * @return CRC-8 checksum (0-255)
- */
-static uint8_t crc8(const uint8_t *data, size_t len)
-{
-	uint8_t crc = 0x00;
+/* Forward declarations for callbacks */
+static void set_led(uint8_t state);
+static int set_pwm_duty(uint8_t duty);
+static int read_adc_channel0(void);
 
-	for (size_t i = 0; i < len; i++) {
-		crc ^= data[i];
-		for (uint8_t bit = 0; bit < 8; bit++) {
-			if (crc & 0x80) {
-				crc = (crc << 1) ^ 0x07;
-			} else {
-				crc <<= 1;
-			}
-		}
-	}
-	return crc;
+/**
+ * @brief Send response byte via UART (callback for protocol module)
+ *
+ * @param resp Response byte (PROTO_RESP_ACK or PROTO_RESP_NACK)
+ */
+static void send_response_cb(uint8_t resp)
+{
+	uart_fifo_fill(uart_dev, &resp, 1);
 }
 
 /**
- * @brief Send response byte via UART
+ * @brief Send ADC response frame (callback for protocol module)
  *
- * @param resp Response byte (RESP_ACK or RESP_NACK)
+ * @details Sends 4-byte response: [CMD][ADC_H][ADC_L][CRC8]
+ *
+ * @param cmd Command byte (PROTO_CMD_READ_ADC)
+ * @param adc_h ADC high byte
+ * @param adc_l ADC low byte
+ * @param crc CRC byte
  */
-static void send_response(uint8_t resp)
+static void send_adc_response_cb(uint8_t cmd, uint8_t adc_h, uint8_t adc_l, uint8_t crc)
 {
-	uart_fifo_fill(uart_dev, &resp, 1);
+	uint8_t response[4];
+
+	response[0] = cmd;
+	response[1] = adc_h;
+	response[2] = adc_l;
+	response[3] = crc;
+
+	uart_fifo_fill(uart_dev, response, sizeof(response));
+}
+
+/**
+ * @brief LED set callback for protocol module
+ *
+ * @param state LED state (0=OFF, 1+=ON)
+ */
+static void led_set_cb(uint8_t state)
+{
+	set_led(state);
+}
+
+/**
+ * @brief PWM duty set callback for protocol module
+ *
+ * @param duty Duty cycle (0-100)
+ * @return 0 on success, -1 on invalid value
+ */
+static int pwm_set_cb(uint8_t duty)
+{
+	return set_pwm_duty(duty);
+}
+
+/**
+ * @brief ADC read callback for protocol module
+ *
+ * @return ADC value (0-4095), or negative on error
+ */
+static int adc_read_cb(void)
+{
+	return read_adc_channel0();
 }
 
 /**
@@ -345,120 +334,6 @@ static void ring_buf_clear(void)
 	ringbuf_clear(&g_rx_buf);
 }
 
-/**
- * @brief Send ADC response frame
- *
- * @details Sends 4-byte response: [CMD_READ_ADC][ADC_H][ADC_L][CRC8]
- *
- * @param adc_value 12-bit ADC value (0-4095)
- */
-static void send_adc_response(uint16_t adc_value)
-{
-	uint8_t response[4];
-
-	response[0] = CMD_READ_ADC;
-	response[1] = (adc_value >> 8) & 0xFF;  /* High byte */
-	response[2] = adc_value & 0xFF;         /* Low byte */
-	response[3] = crc8(response, 3);
-
-	uart_fifo_fill(uart_dev, response, sizeof(response));
-}
-
-/* =========================================================================
- * PROTOCOL STATE MACHINE
- * ========================================================================= */
-
-/**
- * @brief Process received byte through protocol state machine
- *
- * @details Implements protocol parser with support for:
- *          - 3-byte commands: [CMD][VALUE][CRC8] (SET_LED, SET_PWM)
- *          - 2-byte commands: [CMD][CRC8] (READ_ADC)
- *
- * @param byte Received byte from UART
- */
-static void process_byte(uint8_t byte)
-{
-	switch (proto_state) {
-	case STATE_WAIT_CMD:
-		if (byte == CMD_SET_LED || byte == CMD_SET_PWM) {
-			frame_buf[0] = byte;
-			proto_state = STATE_WAIT_VALUE;
-		}
-		else if (byte == CMD_READ_ADC) {
-			frame_buf[0] = byte;
-			proto_state = STATE_WAIT_CRC_ADC;  /* Different state for ADC */
-		}
-		/* Unknown command - ignore */
-		break;
-
-	case STATE_WAIT_VALUE:
-		frame_buf[1] = byte;
-		proto_state = STATE_WAIT_CRC;
-		break;
-
-	case STATE_WAIT_CRC:
-	{
-		/* Verify CRC for 3-byte frame [CMD][VALUE][CRC] */
-		uint8_t calculated_crc = crc8(frame_buf, 2);
-		if (byte != calculated_crc) {
-			send_response(RESP_NACK);
-			send_response(ERR_CRC);
-			proto_state = STATE_WAIT_CMD;
-			break;
-		}
-
-		/* Execute command */
-		if (frame_buf[0] == CMD_SET_LED) {
-			set_led(frame_buf[1]);
-			send_response(RESP_ACK);
-		}
-		else if (frame_buf[0] == CMD_SET_PWM) {
-			if (set_pwm_duty(frame_buf[1]) == 0) {
-				send_response(RESP_ACK);
-			} else {
-				send_response(RESP_NACK);
-				send_response(ERR_INVALID_VAL);
-			}
-		}
-
-		proto_state = STATE_WAIT_CMD;
-		break;
-	}
-
-	case STATE_WAIT_CRC_ADC:
-	{
-		/* Verify CRC for 2-byte frame [CMD][CRC] */
-		uint8_t calculated_crc = crc8(&frame_buf[0], 1);
-		if (byte != calculated_crc) {
-			send_response(RESP_NACK);
-			send_response(ERR_CRC);
-			proto_state = STATE_WAIT_CMD;
-			break;
-		}
-
-		/* Execute ADC read command */
-		int adc_value = read_adc_channel0();
-		if (adc_value >= 0) {
-			send_adc_response(adc_value);
-		} else {
-			send_response(RESP_NACK);
-			send_response(ERR_INVALID_CMD);  /* ADC error */
-		}
-
-		/* Small delay to ensure ADC response transmission completes */
-		k_sleep(K_MSEC(2));
-
-		proto_state = STATE_WAIT_CMD;
-		break;
-	}
-
-	default:
-		proto_state = STATE_WAIT_CMD;
-		break;
-	}
-}
-
 /* =========================================================================
  * RING BUFFER FUNCTIONS (ISR-safe)
  * ========================================================================= */
@@ -523,7 +398,7 @@ static void process_ring_buffer(void)
 	uint8_t byte;
 
 	while (ring_buf_get_byte(&byte) == 0) {
-		process_byte(byte);
+		proto_process_byte(&g_proto, byte);
 	}
 }
 
@@ -582,6 +457,16 @@ int main(void)
 		return 0;
 	}
 
+	/* Initialize protocol context */
+	proto_init(&g_proto);
+
+	/* Register protocol callbacks */
+	g_proto.on_led_set = led_set_cb;
+	g_proto.on_pwm_set = pwm_set_cb;
+	g_proto.on_adc_read = adc_read_cb;
+	g_proto.send_resp = send_response_cb;
+	g_proto.send_adc_resp = send_adc_response_cb;
+
 	/* Wait for DTR */
 	printk("Waiting for USB connection...\n");
 	while (!dtr) {
@@ -598,7 +483,7 @@ int main(void)
 	printk("  0x01 <val> <crc>  -> Set LED (0=OFF, 1+=ON)\n");
 	printk("  0x02 <0-100> <crc> -> Set PWM duty (0=OFF, 100=full)\n");
 	printk("  0x03 <crc>        -> Read ADC (returns [0x03][ADC_H][ADC_L][CRC])\n");
-	printk("  Response: 0xFF=OK, 0xFE=ERR\n");
+	printk("  Response: ACK=0xFF, NACK=0xFE\n");
 	printk("===================================\n\n");
 
 	/* Setup UART RX interrupt */
