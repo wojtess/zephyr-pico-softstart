@@ -177,6 +177,9 @@
 /home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/usb/common/CMakeFiles/rebuild_cache.dir
 /home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/usb_c/CMakeFiles/edit_cache.dir
 /home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/usb_c/CMakeFiles/rebuild_cache.dir
+/home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/adc/CMakeFiles/drivers__adc.dir
+/home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/adc/CMakeFiles/edit_cache.dir
+/home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/adc/CMakeFiles/rebuild_cache.dir
 /home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/clock_control/CMakeFiles/drivers__clock_control.dir
 /home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/clock_control/CMakeFiles/edit_cache.dir
 /home/wojtess/Documents/put/pico/project1/build/zephyr/drivers/clock_control/CMakeFiles/rebuild_cache.dir
@@ -306,8 +309,6 @@
 /home/wojtess/Documents/put/pico/project1/build/modules/ti/simplelink_lpf3/source/ti/boards/CMakeFiles/rebuild_cache.dir
 /home/wojtess/Documents/put/pico/project1/build/modules/ti/mspm0/CMakeFiles/edit_cache.dir
 /home/wojtess/Documents/put/pico/project1/build/modules/ti/mspm0/CMakeFiles/rebuild_cache.dir
-/home/wojtess/Documents/put/pico/project1/build/modules/ti/mspm0/source/ti/devices/msp/CMakeFiles/edit_cache.dir
-/home/wojtess/Documents/put/pico/project1/build/modules/ti/mspm0/source/ti/devices/msp/CMakeFiles/rebuild_cache.dir
 /home/wojtess/Documents/put/pico/project1/build/modules/hal_wch/CMakeFiles/edit_cache.dir
 /home/wojtess/Documents/put/pico/project1/build/modules/hal_wch/CMakeFiles/rebuild_cache.dir
 /home/wojtess/Documents/put/pico/project1/build/modules/hal_wurthelektronik/CMakeFiles/edit_cache.dir

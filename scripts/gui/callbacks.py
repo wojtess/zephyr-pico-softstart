@@ -20,6 +20,7 @@ from .utils import (
     update_last_response,
     get_selected_port,
     handle_disconnect_state,
+    update_queue_display,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,9 @@ def on_connect_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
 
                     if dpg.does_item_exist(TAGS["led_btn"]):
                         dpg.configure_item(TAGS["led_btn"], enabled=True)
+
+                    if dpg.does_item_exist(TAGS["adc_read_btn"]):
+                        dpg.configure_item(TAGS["adc_read_btn"], enabled=True)
 
                     update_connection_indicator(True)
                     update_status(result.message, [100, 200, 100])
@@ -255,6 +259,67 @@ def on_pwm_slider_changed(sender, app_data, user_data: LEDControllerApp) -> None
     threading.Thread(target=check_pwm, daemon=True).start()
 
 
+def on_adc_read_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Callback for ADC single read button."""
+    # Disable button
+    if dpg.does_item_exist(sender):
+        dpg.configure_item(sender, enabled=False)
+
+    update_status("Reading ADC...", [200, 200, 100])
+    dpg.split_frame()
+
+    task = SerialTask(command=SerialCommand.READ_ADC)
+    result_queue = user_data.send_task(task)
+
+    # Check result in separate thread
+    def check_adc():
+        try:
+            result = result_queue.get(timeout=2)
+
+            # Re-enable button
+            if dpg.does_item_exist(sender):
+                dpg.configure_item(sender, enabled=True)
+
+            if result.success:
+                update_status(result.message, [100, 200, 100])
+                update_last_response(f"ADC: {result.adc_value} ({result.adc_voltage:.3f}V)")
+
+                # Update value displays
+                if dpg.does_item_exist(TAGS["adc_value_raw"]):
+                    dpg.set_value(TAGS["adc_value_raw"], f"{result.adc_value}")
+                if dpg.does_item_exist(TAGS["adc_value_voltage"]):
+                    dpg.set_value(TAGS["adc_value_voltage"], f"{result.adc_voltage:.3f} V")
+
+                # Add data to app history and update plot
+                user_data.add_adc_data(result.adc_value, result.adc_voltage)
+
+                # Update plot if exists
+                if dpg.does_item_exist(TAGS["adc_plot"]):
+                    x_axis, raw_series, volt_series = user_data.get_adc_history()
+
+                    # Update plot series with set_value
+                    if dpg.does_item_exist(TAGS["adc_series_raw"]):
+                        dpg.set_value(TAGS["adc_series_raw"], [x_axis, raw_series])
+                    if dpg.does_item_exist(TAGS["adc_series_voltage"]):
+                        dpg.set_value(TAGS["adc_series_voltage"], [x_axis, volt_series])
+
+            else:
+                # Check if disconnected
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+
+                update_status(f"ADC Error: {result.message}", [255, 100, 100])
+                update_last_response(f"ADC Error: {result.error or 'Unknown'}")
+
+        except queue.Empty:
+            if dpg.does_item_exist(sender):
+                dpg.configure_item(sender, enabled=True)
+            update_status("ADC read timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_adc, daemon=True).start()
+
+
 def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
     """Called every frame to check for health check results."""
     # Note: PWM slider now uses direct callback instead of polling
@@ -278,3 +343,6 @@ def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
             if current_time - user_data._last_health_check >= user_data._health_check_interval:
                 user_data._last_health_check = current_time
                 user_data.send_task(SerialTask(command=SerialCommand.CHECK_HEALTH))
+
+    # Update queue display
+    update_queue_display(user_data)

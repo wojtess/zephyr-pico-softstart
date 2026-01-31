@@ -7,6 +7,10 @@
  */
 
 /* Symbol declarations */
+extern void * const z_impl_adc_channel_setup;
+extern void * const z_impl_adc_get_decoder;
+extern void * const z_impl_adc_read;
+extern void * const z_impl_adc_read_async;
 extern void * const z_impl_atomic_add;
 extern void * const z_impl_atomic_and;
 extern void * const z_impl_atomic_cas;
@@ -190,6 +194,10 @@ extern void * const z_impl_zephyr_read_stdin;
 extern void * const z_impl_zephyr_write_stdout;
 
 /* Exported symbols */
+EXPORT_GROUP_SYMBOL(SYSCALL, z_impl_adc_channel_setup);
+EXPORT_GROUP_SYMBOL(SYSCALL, z_impl_adc_get_decoder);
+EXPORT_GROUP_SYMBOL(SYSCALL, z_impl_adc_read);
+EXPORT_GROUP_SYMBOL(SYSCALL, z_impl_adc_read_async);
 EXPORT_GROUP_SYMBOL(SYSCALL, z_impl_atomic_add);
 EXPORT_GROUP_SYMBOL(SYSCALL, z_impl_atomic_and);
 EXPORT_GROUP_SYMBOL(SYSCALL, z_impl_atomic_cas);

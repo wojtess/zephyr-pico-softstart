@@ -34,6 +34,7 @@ linker.cmd: \
  /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/devicetree/port-endpoint.h \
  /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/devicetree/display.h \
  /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/devicetree/hwspinlock.h \
+ /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/devicetree/map.h \
  /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/linker/devicetree_regions.h \
  /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/linker/linker-defs.h \
  /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/toolchain/common.h \

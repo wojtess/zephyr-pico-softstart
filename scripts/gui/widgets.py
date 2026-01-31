@@ -14,6 +14,7 @@ from .callbacks import (
     on_connect_clicked,
     on_led_toggle_clicked,
     on_pwm_slider_changed,
+    on_adc_read_clicked,
 )
 from .utils import find_ports_with_info, update_status
 
@@ -149,6 +150,111 @@ def create_main_window(app: LEDControllerApp) -> None:
             default_value="Last: None",
             color=[180, 180, 180],
         )
+
+        # ADC section
+        dpg.add_spacer(height=15)
+        dpg.add_separator()
+        dpg.add_spacer(height=10)
+
+        dpg.add_text("ADC (GPIO26 - 0-3.3V):", color=[200, 200, 200])
+
+        dpg.add_spacer(height=5)
+
+        # ADC value displays
+        with dpg.group(horizontal=True):
+            dpg.add_text("Raw:", color=[180, 180, 180])
+            dpg.add_spacer(width=5)
+            dpg.add_text(
+                tag=TAGS["adc_value_raw"],
+                default_value="--",
+                color=[100, 200, 255],
+            )
+
+            dpg.add_spacer(width=20)
+
+            dpg.add_text("Voltage:", color=[180, 180, 180])
+            dpg.add_spacer(width=5)
+            dpg.add_text(
+                tag=TAGS["adc_value_voltage"],
+                default_value="-- V",
+                color=[100, 255, 100],
+            )
+
+        # ADC button
+        dpg.add_spacer(height=8)
+
+        with dpg.group(horizontal=True):
+            dpg.add_button(
+                label="Read ADC",
+                tag=TAGS["adc_read_btn"],
+                callback=on_adc_read_clicked,
+                user_data=app,
+                width=120,
+                enabled=False,
+            )
+
+        # ADC Plot
+        dpg.add_spacer(height=10)
+        dpg.add_text("ADC History (last 100 samples):", color=[150, 150, 150])
+
+        dpg.add_spacer(height=5)
+
+        # Create plot with x-axis tag
+        with dpg.plot(
+            tag=TAGS["adc_plot"],
+            height=200,
+            width=-1,
+            no_menus=True,
+            no_box_select=True,
+        ):
+            # Create x and y axes
+            x_axis = dpg.add_plot_axis(dpg.mvXAxis, tag="adc_plot_x_axis", label="Time")
+            y_axis = dpg.add_plot_axis(dpg.mvYAxis, tag="adc_plot_y_axis", label="Value")
+
+            # Add two series: raw value (0-4095) and voltage (0-3.3V) - parent must be y_axis
+            dpg.add_line_series(
+                [],
+                [],
+                tag=TAGS["adc_series_raw"],
+                label="Raw (0-4095)",
+                parent=y_axis,
+            )
+            dpg.add_line_series(
+                [],
+                [],
+                tag=TAGS["adc_series_voltage"],
+                label="Voltage (V)",
+                parent=y_axis,
+            )
+
+        # Task Queue section
+        dpg.add_spacer(height=15)
+        dpg.add_separator()
+        dpg.add_spacer(height=10)
+
+        dpg.add_text("Task Queue:", color=[200, 200, 200])
+
+        dpg.add_spacer(height=5)
+
+        with dpg.group(horizontal=True):
+            dpg.add_text("Pending:", color=[180, 180, 180])
+            dpg.add_spacer(width=5)
+            dpg.add_text(
+                tag=TAGS["queue_count"],
+                default_value="0",
+                color=[100, 200, 255],
+            )
+
+        dpg.add_spacer(height=3)
+
+        with dpg.group(horizontal=True):
+            dpg.add_text("Processing:", color=[180, 180, 180])
+            dpg.add_spacer(width=5)
+            dpg.add_text(
+                tag=TAGS["queue_processing"],
+                default_value="None",
+                color=[150, 150, 150],
+            )
 
     # Set as primary window
     dpg.set_primary_window(TAGS["primary_window"], True)

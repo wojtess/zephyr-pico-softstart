@@ -74,9 +74,9 @@
 # 1 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_internal.h" 1 3 4
 # 18 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_internal.h" 3 4
 # 1 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_loops.h" 1 3 4
-# 1083 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_loops.h" 3 4
+# 1465 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_loops.h" 3 4
 # 1 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_listify.h" 1 3 4
-# 1084 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_loops.h" 2 3 4
+# 1466 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_loops.h" 2 3 4
 # 19 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_internal.h" 2 3 4
 # 203 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_internal.h" 3 4
 # 1 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/include/zephyr/sys/util_internal_is_eq.h" 1 3 4
@@ -765,11 +765,17 @@ zephyr_udc0: &usbd {
 
 pico_spi: &spi0 {};
 
+pico_spi0: &spi0 {};
+
+pico_i2c: &i2c0 {};
+
 pico_i2c0: &i2c0 {};
 
 pico_i2c1: &i2c1 {};
 
 pico_serial: &uart0 {};
+
+pico_serial0: &uart0 {};
 # 10 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/raspberrypi/rpi_pico/rpi_pico.dts" 2
 # 1 "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/raspberrypi/rpi_pico/../common/rpi_pico-led.dtsi" 1
 
@@ -814,6 +820,12 @@ pico_serial: &uart0 {};
  chosen {
   zephyr,console = &cdc_acm_uart0;
  };
+
+
+ adc_io: adc_io {
+  compatible = "gpio-keys";
+  label = "ADC_IO";
+ };
 };
 
 &zephyr_udc0 {
@@ -831,12 +843,26 @@ pico_serial: &uart0 {};
 };
 
 
+&adc {
+ status = "okay";
+ #io-channel-cells = <1>;
+ pinctrl-0 = <&adc_default>;
+ pinctrl-names = "default";
+};
+
+
 &pinctrl {
 
  pwm0a_default: pwm0a_default {
   group1 {
    pinmux = <(((16) << 5) | ((4) << 0))>;
   };
+ };
+
+
+ adc_default: adc_default {
+  pins = "gpio26";
+  function = "adc0";
  };
 };
 # 0 "<command-line>" 2

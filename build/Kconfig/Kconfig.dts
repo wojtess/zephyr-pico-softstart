@@ -1812,6 +1812,11 @@ DT_COMPAT_BFLB_ADC := bflb,adc
 config DT_HAS_BFLB_ADC_ENABLED
 	def_bool $(dt_compat_enabled,$(DT_COMPAT_BFLB_ADC))
 
+DT_COMPAT_BFLB_AON_REGULATOR := bflb,aon-regulator
+
+config DT_HAS_BFLB_AON_REGULATOR_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_BFLB_AON_REGULATOR))
+
 DT_COMPAT_BFLB_BCLK := bflb,bclk
 
 config DT_HAS_BFLB_BCLK_ENABLED
@@ -1932,6 +1937,11 @@ DT_COMPAT_BFLB_PINCTRL := bflb,pinctrl
 config DT_HAS_BFLB_PINCTRL_ENABLED
 	def_bool $(dt_compat_enabled,$(DT_COMPAT_BFLB_PINCTRL))
 
+DT_COMPAT_BFLB_POWER_CONTROLLER := bflb,power-controller
+
+config DT_HAS_BFLB_POWER_CONTROLLER_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_BFLB_POWER_CONTROLLER))
+
 DT_COMPAT_BFLB_PWM_1 := bflb,pwm-1
 
 config DT_HAS_BFLB_PWM_1_ENABLED
@@ -1941,6 +1951,16 @@ DT_COMPAT_BFLB_PWM_2 := bflb,pwm-2
 
 config DT_HAS_BFLB_PWM_2_ENABLED
 	def_bool $(dt_compat_enabled,$(DT_COMPAT_BFLB_PWM_2))
+
+DT_COMPAT_BFLB_RT_REGULATOR := bflb,rt-regulator
+
+config DT_HAS_BFLB_RT_REGULATOR_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_BFLB_RT_REGULATOR))
+
+DT_COMPAT_BFLB_SOC_REGULATOR := bflb,soc-regulator
+
+config DT_HAS_BFLB_SOC_REGULATOR_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_BFLB_SOC_REGULATOR))
 
 DT_COMPAT_BFLB_SPI := bflb,spi
 
@@ -3961,6 +3981,11 @@ DT_COMPAT_ITE_IT51XXX_MANUAL_FLASH_1K := ite,it51xxx-manual-flash-1k
 
 config DT_HAS_ITE_IT51XXX_MANUAL_FLASH_1K_ENABLED
 	def_bool $(dt_compat_enabled,$(DT_COMPAT_ITE_IT51XXX_MANUAL_FLASH_1K))
+
+DT_COMPAT_ITE_IT51XXX_PS2 := ite,it51xxx-ps2
+
+config DT_HAS_ITE_IT51XXX_PS2_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_ITE_IT51XXX_PS2))
 
 DT_COMPAT_ITE_IT51XXX_PWM := ite,it51xxx-pwm
 
@@ -7917,6 +7942,11 @@ DT_COMPAT_NXP_NX20P3483 := nxp,nx20p3483
 config DT_HAS_NXP_NX20P3483_ENABLED
 	def_bool $(dt_compat_enabled,$(DT_COMPAT_NXP_NX20P3483))
 
+DT_COMPAT_NXP_OCOTP := nxp,ocotp
+
+config DT_HAS_NXP_OCOTP_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_NXP_OCOTP))
+
 DT_COMPAT_NXP_OPAMP := nxp,opamp
 
 config DT_HAS_NXP_OPAMP_ENABLED
@@ -9917,6 +9947,11 @@ DT_COMPAT_RENESAS_RZ_ADC_C := renesas,rz-adc-c
 config DT_HAS_RENESAS_RZ_ADC_C_ENABLED
 	def_bool $(dt_compat_enabled,$(DT_COMPAT_RENESAS_RZ_ADC_C))
 
+DT_COMPAT_RENESAS_RZ_ADC_E := renesas,rz-adc-e
+
+config DT_HAS_RENESAS_RZ_ADC_E_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_RENESAS_RZ_ADC_E))
+
 DT_COMPAT_RENESAS_RZ_CANFD := renesas,rz-canfd
 
 config DT_HAS_RENESAS_RZ_CANFD_ENABLED
@@ -10377,6 +10412,11 @@ DT_COMPAT_RICHTEK_RT1718S_GPIO_PORT := richtek,rt1718s-gpio-port
 config DT_HAS_RICHTEK_RT1718S_GPIO_PORT_ENABLED
 	def_bool $(dt_compat_enabled,$(DT_COMPAT_RICHTEK_RT1718S_GPIO_PORT))
 
+DT_COMPAT_RISCV := riscv
+
+config DT_HAS_RISCV_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_RISCV))
+
 DT_COMPAT_RISCV_CLIC := riscv,clic
 
 config DT_HAS_RISCV_CLIC_ENABLED
@@ -10386,6 +10426,11 @@ DT_COMPAT_RISCV_CPU_INTC := riscv,cpu-intc
 
 config DT_HAS_RISCV_CPU_INTC_ENABLED
 	def_bool $(dt_compat_enabled,$(DT_COMPAT_RISCV_CPU_INTC))
+
+DT_COMPAT_RISCV_IMSIC := riscv,imsic
+
+config DT_HAS_RISCV_IMSIC_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_RISCV_IMSIC))
 
 DT_COMPAT_RISCV_MACHINE_TIMER := riscv,machine-timer
 
@@ -10456,6 +10501,11 @@ DT_COMPAT_SCIOSENSE_ENS160 := sciosense,ens160
 
 config DT_HAS_SCIOSENSE_ENS160_ENABLED
 	def_bool $(dt_compat_enabled,$(DT_COMPAT_SCIOSENSE_ENS160))
+
+DT_COMPAT_SCT_SCT2024 := sct,sct2024
+
+config DT_HAS_SCT_SCT2024_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_SCT_SCT2024))
 
 DT_COMPAT_SEEED_GROVE_LCD_RGB := seeed,grove-lcd-rgb
 
@@ -11361,6 +11411,11 @@ DT_COMPAT_SKYWORKS_SKY13317 := skyworks,sky13317
 
 config DT_HAS_SKYWORKS_SKY13317_ENABLED
 	def_bool $(dt_compat_enabled,$(DT_COMPAT_SKYWORKS_SKY13317))
+
+DT_COMPAT_SKYWORKS_SKY13348 := skyworks,sky13348
+
+config DT_HAS_SKYWORKS_SKY13348_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_SKYWORKS_SKY13348))
 
 DT_COMPAT_SKYWORKS_SKY13351 := skyworks,sky13351
 
@@ -14212,6 +14267,11 @@ DT_COMPAT_VND_GPIO_INTC_DEVICE := vnd,gpio-intc-device
 config DT_HAS_VND_GPIO_INTC_DEVICE_ENABLED
 	def_bool $(dt_compat_enabled,$(DT_COMPAT_VND_GPIO_INTC_DEVICE))
 
+DT_COMPAT_VND_GPIO_NEXUS := vnd,gpio-nexus
+
+config DT_HAS_VND_GPIO_NEXUS_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_VND_GPIO_NEXUS))
+
 DT_COMPAT_VND_GPIO_ONE_CELL := vnd,gpio-one-cell
 
 config DT_HAS_VND_GPIO_ONE_CELL_ENABLED
@@ -14291,6 +14351,11 @@ DT_COMPAT_VND_INTERRUPT_HOLDER_EXTENDED := vnd,interrupt-holder-extended
 
 config DT_HAS_VND_INTERRUPT_HOLDER_EXTENDED_ENABLED
 	def_bool $(dt_compat_enabled,$(DT_COMPAT_VND_INTERRUPT_HOLDER_EXTENDED))
+
+DT_COMPAT_VND_INTR_NEXUS := vnd,intr-nexus
+
+config DT_HAS_VND_INTR_NEXUS_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_VND_INTR_NEXUS))
 
 DT_COMPAT_VND_MBOX := vnd,mbox
 
@@ -14801,6 +14866,36 @@ DT_COMPAT_XLNX_VERSAL_WWDT := xlnx,versal-wwdt
 
 config DT_HAS_XLNX_VERSAL_WWDT_ENABLED
 	def_bool $(dt_compat_enabled,$(DT_COMPAT_XLNX_VERSAL_WWDT))
+
+DT_COMPAT_XLNX_XPS_ETHERNETLITE_1_00_A := xlnx,xps-ethernetlite-1.00.a
+
+config DT_HAS_XLNX_XPS_ETHERNETLITE_1_00_A_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_XLNX_XPS_ETHERNETLITE_1_00_A))
+
+DT_COMPAT_XLNX_XPS_ETHERNETLITE_1_00_A_MAC := xlnx,xps-ethernetlite-1.00.a-mac
+
+config DT_HAS_XLNX_XPS_ETHERNETLITE_1_00_A_MAC_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_XLNX_XPS_ETHERNETLITE_1_00_A_MAC))
+
+DT_COMPAT_XLNX_XPS_ETHERNETLITE_1_00_A_MDIO := xlnx,xps-ethernetlite-1.00.a-mdio
+
+config DT_HAS_XLNX_XPS_ETHERNETLITE_1_00_A_MDIO_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_XLNX_XPS_ETHERNETLITE_1_00_A_MDIO))
+
+DT_COMPAT_XLNX_XPS_ETHERNETLITE_3_00_A := xlnx,xps-ethernetlite-3.00.a
+
+config DT_HAS_XLNX_XPS_ETHERNETLITE_3_00_A_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_XLNX_XPS_ETHERNETLITE_3_00_A))
+
+DT_COMPAT_XLNX_XPS_ETHERNETLITE_3_00_A_MAC := xlnx,xps-ethernetlite-3.00.a-mac
+
+config DT_HAS_XLNX_XPS_ETHERNETLITE_3_00_A_MAC_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_XLNX_XPS_ETHERNETLITE_3_00_A_MAC))
+
+DT_COMPAT_XLNX_XPS_ETHERNETLITE_3_00_A_MDIO := xlnx,xps-ethernetlite-3.00.a-mdio
+
+config DT_HAS_XLNX_XPS_ETHERNETLITE_3_00_A_MDIO_ENABLED
+	def_bool $(dt_compat_enabled,$(DT_COMPAT_XLNX_XPS_ETHERNETLITE_3_00_A_MDIO))
 
 DT_COMPAT_XLNX_XPS_GPIO_1_00_A := xlnx,xps-gpio-1.00.a
 

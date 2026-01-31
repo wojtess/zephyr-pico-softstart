@@ -111,5 +111,25 @@ def handle_disconnect_state(app: LEDControllerApp) -> None:
     if dpg.does_item_exist(TAGS["led_btn"]):
         dpg.configure_item(TAGS["led_btn"], enabled=False)
 
+    if dpg.does_item_exist(TAGS["adc_read_btn"]):
+        dpg.configure_item(TAGS["adc_read_btn"], enabled=False)
+
     update_connection_indicator(False)
     update_led_indicator(False)
+
+
+def update_queue_display(app: LEDControllerApp) -> None:
+    """Update task queue display in GUI."""
+    pending_count = app.get_pending_count()
+    processing_task = app.get_processing_task()
+
+    if dpg.does_item_exist(TAGS["queue_count"]):
+        dpg.set_value(TAGS["queue_count"], str(pending_count))
+
+    if dpg.does_item_exist(TAGS["queue_processing"]):
+        if processing_task:
+            dpg.set_value(TAGS["queue_processing"], processing_task)
+            dpg.configure_item(TAGS["queue_processing"], color=[100, 255, 100])
+        else:
+            dpg.set_value(TAGS["queue_processing"], "None")
+            dpg.configure_item(TAGS["queue_processing"], color=[150, 150, 150])

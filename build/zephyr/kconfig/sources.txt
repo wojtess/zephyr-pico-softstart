@@ -179,6 +179,7 @@
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/shields/mikroe_lsm6dsl_click/Kconfig.shield
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/shields/mikroe_lte_iot10_click/Kconfig.defconfig
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/shields/mikroe_lte_iot10_click/Kconfig.shield
+/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/shields/mikroe_mcp251x_click/Kconfig.shield
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/shields/mikroe_mcp251xfd_click/Kconfig.shield
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/shields/mikroe_pressure_3_click/Kconfig.shield
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/shields/mikroe_proximity_9_click/Kconfig.shield
@@ -798,6 +799,7 @@
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/ethernet/Kconfig.test
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/ethernet/Kconfig.virtio_net
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/ethernet/Kconfig.w5500
+/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/ethernet/Kconfig.xilinx_axi_ethernet_lite
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/ethernet/Kconfig.xilinx_axienet
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/ethernet/Kconfig.xlnx_gem
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/ethernet/Kconfig.xmc4xxx
@@ -1207,6 +1209,7 @@
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/interrupt_controller/Kconfig.plic
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/interrupt_controller/Kconfig.renesas_rx
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/interrupt_controller/Kconfig.renesas_rz
+/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/interrupt_controller/Kconfig.riscv_aia
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/interrupt_controller/Kconfig.rv32m1
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/interrupt_controller/Kconfig.sam0
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/interrupt_controller/Kconfig.shared_irq
@@ -1242,6 +1245,7 @@
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/led/Kconfig.pca9533
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/led/Kconfig.pca9633
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/led/Kconfig.pwm
+/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/led/Kconfig.sct2024
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/led/Kconfig.tlc59108
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/led/Kconfig.xec
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/led_strip/Kconfig
@@ -1290,6 +1294,7 @@
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/mdio/Kconfig.sam
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/mdio/Kconfig.stm32_hal
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/mdio/Kconfig.sy1xx
+/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/mdio/Kconfig.xilinx_axi_ethernet_lite
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/mdio/Kconfig.xilinx_axienet
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/mdio/Kconfig.xmc4xxx
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/memc/Kconfig
@@ -1390,6 +1395,7 @@
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/opamp/Kconfig.mcux_opamp_fast
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/otp/Kconfig
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/otp/Kconfig.emu
+/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/otp/Kconfig.mcux_ocotp
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/otp/Kconfig.stm32
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/pcie/Kconfig
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/pcie/controller/Kconfig
@@ -1464,6 +1470,7 @@
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/power_domain/Kconfig.nrfs_swext
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/power_domain/Kconfig.silabs_siwx91x
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/ps2/Kconfig
+/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/ps2/Kconfig.it51xxx
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/ps2/Kconfig.npcx
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/ps2/Kconfig.xec
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/psi5/Kconfig
@@ -1532,6 +1539,7 @@
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/regulator/Kconfig
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/regulator/Kconfig.adp5360
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/regulator/Kconfig.axp192
+/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/regulator/Kconfig.bflb
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/regulator/Kconfig.cp9314
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/regulator/Kconfig.da1469x
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/drivers/regulator/Kconfig.fake
@@ -2416,6 +2424,7 @@
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/modules/lvgl/Kconfig.memory
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/modules/lvgl/Kconfig.shell
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/modules/mbedtls/Kconfig
+/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/modules/mbedtls/Kconfig.ciphersuites
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/modules/mbedtls/Kconfig.deprecated
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/modules/mbedtls/Kconfig.mbedtls
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/modules/mbedtls/Kconfig.psa.auto
@@ -4209,8 +4218,11 @@
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/subsys/mgmt/mcumgr/smp_client/Kconfig
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/subsys/mgmt/mcumgr/transport/Kconfig
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/subsys/mgmt/mcumgr/transport/Kconfig.bluetooth
+/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/subsys/mgmt/mcumgr/transport/Kconfig.common
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/subsys/mgmt/mcumgr/transport/Kconfig.dummy
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/subsys/mgmt/mcumgr/transport/Kconfig.lorawan
+/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/subsys/mgmt/mcumgr/transport/Kconfig.raw_dummy
+/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/subsys/mgmt/mcumgr/transport/Kconfig.raw_uart
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/subsys/mgmt/mcumgr/transport/Kconfig.shell
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/subsys/mgmt/mcumgr/transport/Kconfig.uart
 /home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/subsys/mgmt/mcumgr/transport/Kconfig.udp

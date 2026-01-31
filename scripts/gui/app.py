@@ -24,10 +24,12 @@ from .constants import SerialCommand, SerialTask, SerialResult
 from protocol import (
     CMD_SET_LED,
     CMD_SET_PWM,
+    CMD_READ_ADC,
     RESP_ACK,
     RESP_NACK,
     build_frame,
-    parse_response,
+    build_adc_frame,
+    parse_adc_response,
     get_error_name,
 )
 
@@ -56,6 +58,16 @@ class LEDControllerApp:
         self._last_health_check: float = 0.0
         self._health_check_interval: float = 1.0  # seconds
 
+        # ADC data history (thread-safe with lock)
+        self._adc_time_history: List[float] = []
+        self._adc_raw_history: List[int] = []
+        self._adc_voltage_history: List[float] = []
+        self._adc_max_points: int = 100
+
+        # Command queue (visible in GUI) - pending tasks waiting to be processed
+        self._pending_tasks: List[SerialTask] = []
+        self._processing_task: Optional[SerialTask] = None
+
         # Start worker thread
         self._start_worker()
 
@@ -74,33 +86,43 @@ class LEDControllerApp:
             try:
                 task = self._task_queue.get(timeout=0.1)
 
+                # Set as processing task and remove from pending
+                with self._lock:
+                    if task in self._pending_tasks:
+                        self._pending_tasks.remove(task)
+                    self._processing_task = task
+
+                # Execute command
+                result = None
                 if task.command == SerialCommand.QUIT:
                     logger.info("Worker received QUIT command")
                     break
 
                 elif task.command == SerialCommand.CONNECT:
                     result = self._handle_connect(task.port)
-                    if task.result_queue:
-                        task.result_queue.put(result)
 
                 elif task.command == SerialCommand.DISCONNECT:
                     result = self._handle_disconnect()
-                    if task.result_queue:
-                        task.result_queue.put(result)
 
                 elif task.command == SerialCommand.SEND_LED:
                     result = self._handle_send_led(task.led_state)
-                    if task.result_queue:
-                        task.result_queue.put(result)
 
                 elif task.command == SerialCommand.SEND_PWM:
                     result = self._handle_send_pwm(task.pwm_duty)
-                    if task.result_queue:
-                        task.result_queue.put(result)
+
+                elif task.command == SerialCommand.READ_ADC:
+                    result = self._handle_read_adc()
 
                 elif task.command == SerialCommand.CHECK_HEALTH:
                     result = self._handle_health_check()
-                    # Health check doesn't need result callback
+
+                # Clear processing task
+                with self._lock:
+                    self._processing_task = None
+
+                # Send result to callback
+                if task.result_queue and result:
+                    task.result_queue.put(result)
 
                 self._task_queue.task_done()
 
@@ -108,6 +130,9 @@ class LEDControllerApp:
                 continue
             except Exception as e:
                 logger.error(f"Worker error: {e}", exc_info=True)
+                # Clear processing task on error
+                with self._lock:
+                    self._processing_task = None
 
         logger.info("Serial worker stopped")
 
@@ -249,8 +274,10 @@ class LEDControllerApp:
                     err_byte = self._serial_connection.read(1)
                     if err_byte:
                         err_code = err_byte[0]
+                    else:
+                        logger.warning("SEND_LED: NACK received but no error byte (timeout?)")
 
-                logger.debug(f"SEND_LED: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
+                logger.info(f"SEND_LED: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
 
                 if resp_type == RESP_ACK:
                     self._led_state = state  # State update inside lock
@@ -419,6 +446,67 @@ class LEDControllerApp:
                 error=str(e)
             )
 
+    def _handle_read_adc(self) -> SerialResult:
+        """Handle ADC read command in worker thread."""
+        cmd = SerialCommand.READ_ADC
+        logger.info("READ_ADC: reading ADC value")
+
+        try:
+            with self._lock:
+                if not self._serial_connection or not self._serial_connection.is_open:
+                    logger.warning("READ_ADC: Not connected")
+                    return SerialResult(cmd, False, "Not connected", error="No connection")
+
+                # Build and send ADC read frame
+                frame = build_adc_frame()
+                logger.info(f"READ_ADC: sending frame: {frame.hex()}")
+
+                self._serial_connection.write(frame)
+                self._serial_connection.flush()
+
+                # Read response: 4 bytes [CMD][ADC_H][ADC_L][CRC]
+                resp = self._serial_connection.read(4)
+                if not resp or len(resp) < 4:
+                    logger.error(f"READ_ADC: No response from device (got {len(resp) if resp else 0} bytes)")
+                    self._is_connected = False
+                    self._serial_connection = None
+                    return SerialResult(cmd, False, "Device not responding (timeout)", error="Timeout")
+
+                logger.info(f"READ_ADC: received response: {resp.hex()}")
+
+                # Parse ADC response
+                adc_value, err_code = parse_adc_response(resp)
+
+                if adc_value >= 0:
+                    # Convert to voltage (0-3.3V)
+                    voltage = (adc_value / 4095.0) * 3.3
+                    logger.info(f"READ_ADC: ADC raw={adc_value}, voltage={voltage:.3f}V")
+                    return SerialResult(
+                        cmd, True, f"ADC: {adc_value} ({voltage:.3f}V)",
+                        adc_value=adc_value, adc_voltage=voltage
+                    )
+                else:
+                    error_name = get_error_name(err_code)
+                    logger.warning(f"READ_ADC: Error - {error_name}")
+                    return SerialResult(cmd, False, f"ADC error: {error_name}", error=error_name)
+
+        except serial.SerialException as e:
+            error_msg = str(e)
+            if "device disconnected" in error_msg.lower():
+                with self._lock:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+                logger.warning("Device disconnected during ADC read")
+                return SerialResult(cmd, False, "Device disconnected", error="Disconnected")
+            else:
+                logger.error(f"Serial error: {e}")
+                return SerialResult(cmd, False, "Communication error", error=str(e))
+
+        except Exception as e:
+            logger.error(f"Unexpected error reading ADC: {e}", exc_info=True)
+            return SerialResult(cmd, False, "Unexpected error", error=str(e))
+
     def _handle_health_check(self) -> SerialResult:
         """Check if connection is still alive.
 
@@ -480,6 +568,10 @@ class LEDControllerApp:
         """Send task to worker thread and return result queue."""
         result_queue = queue.Queue()
         task.result_queue = result_queue
+
+        with self._lock:
+            self._pending_tasks.append(task)
+
         self._task_queue.put(task)
         return result_queue
 
@@ -493,6 +585,48 @@ class LEDControllerApp:
         except queue.Empty:
             pass
         return results
+
+    def add_adc_data(self, raw_value: int, voltage: float) -> None:
+        """Add ADC reading to history (thread-safe)."""
+        import time
+        with self._lock:
+            current_time = time.time()
+            self._adc_time_history.append(current_time)
+            self._adc_raw_history.append(raw_value)
+            self._adc_voltage_history.append(voltage)
+
+            # Limit to max points
+            if len(self._adc_time_history) > self._adc_max_points:
+                self._adc_time_history = self._adc_time_history[-self._adc_max_points:]
+                self._adc_raw_history = self._adc_raw_history[-self._adc_max_points:]
+                self._adc_voltage_history = self._adc_voltage_history[-self._adc_max_points:]
+
+    def get_adc_history(self) -> tuple:
+        """Get ADC history data with sequential indices for x-axis."""
+        with self._lock:
+            if not self._adc_time_history:
+                return [], [], []
+
+            # Use sequential indices for x-axis (0, 1, 2, 3, ...)
+            x_axis = list(range(len(self._adc_time_history)))
+            return x_axis, list(self._adc_raw_history), list(self._adc_voltage_history)
+
+    def get_pending_count(self) -> int:
+        """Get number of tasks pending in queue."""
+        with self._lock:
+            return len(self._pending_tasks)
+
+    def get_processing_task(self) -> Optional[str]:
+        """Get name of currently processing task."""
+        with self._lock:
+            if self._processing_task:
+                return self._processing_task.command.value
+            return None
+
+    def get_pending_list(self) -> List[str]:
+        """Get list of pending task names."""
+        with self._lock:
+            return [t.command.value for t in self._pending_tasks]
 
     def shutdown(self) -> None:
         """Shutdown the application and worker thread."""

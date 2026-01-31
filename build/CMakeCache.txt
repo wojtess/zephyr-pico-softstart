@@ -602,6 +602,7 @@ SOC_DIRECTORIES:INTERNAL=/home/wojtess/Documents/put/pico/project1/.zephyr/zephy
 SOC_LINKER_SCRIPT:INTERNAL=/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/soc/raspberrypi/rpi_pico/rp2040/linker.ld
 //West
 WEST:INTERNAL=/home/wojtess/Documents/put/pico/project1/venv/bin/python3;-m;west
+ZEPHYR_SHARED_TARGETS:INTERNAL=menuconfig;guiconfig;hardenconfig;traceconfig
 //Compiler reason failure
 _Python3_Compiler_REASON_FAILURE:INTERNAL=
 //Development reason failure

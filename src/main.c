@@ -326,13 +326,10 @@ static int read_adc_channel0(void)
 	/* Read ADC */
 	ret = adc_read(adc_dev, &sequence);
 	if (ret != 0) {
-		printk("ADC read failed: %d\n", ret);
 		return ret;
 	}
 
 	adc_value = sample_buffer;
-	printk("ADC read: %d (raw)\n", adc_value);
-
 	return adc_value;
 }
 
@@ -340,6 +337,34 @@ static int read_adc_channel0(void)
  * @brief Send ADC reading as response
  *
  * @details Sends [CMD][ADC_H][ADC_L][CRC8] response
+ *
+ * @param adc_value 12-bit ADC value (0-4095)
+ */
+/**
+ * @brief Clear ring buffer by resetting head and tail pointers
+ *
+ * @details Thread-safe with spinlock protection
+ */
+static void ring_buf_clear(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&rx_buf_lock);
+
+	/* Physically clear all bytes in the buffer to prevent data leakage */
+	for (size_t i = 0; i < RX_BUF_SIZE; i++) {
+		rx_buf[i] = 0;
+	}
+
+	/* Reset pointers */
+	rx_head = 0;
+	rx_tail = 0;
+
+	k_spin_unlock(&rx_buf_lock, key);
+}
+
+/**
+ * @brief Send ADC response frame
+ *
+ * @details Sends 4-byte response: [CMD_READ_ADC][ADC_H][ADC_L][CRC8]
  *
  * @param adc_value 12-bit ADC value (0-4095)
  */
@@ -436,6 +461,9 @@ static void process_byte(uint8_t byte)
 			send_response(RESP_NACK);
 			send_response(ERR_INVALID_CMD);  /* ADC error */
 		}
+
+		/* Small delay to ensure ADC response transmission completes */
+		k_sleep(K_MSEC(2));
 
 		proto_state = STATE_WAIT_CMD;
 		break;
