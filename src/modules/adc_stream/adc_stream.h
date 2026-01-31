@@ -35,21 +35,30 @@
  * CONTEXT STRUCTURE
  * ========================================================================= */
 
+/* Forward declaration */
+struct led_pwm_ctx;
+
 /**
  * @brief ADC stream context
  *
- * @details Holds timer, state, and ADC/TX buffer references.
+ * @details Holds timer, work item, state, and ADC/TX buffer references.
  *          Must be initialized with adc_stream_init() before use.
  */
 struct adc_stream_ctx {
 	/** Timer for periodic sampling */
 	struct k_timer timer;
 
+	/** Work item for ADC read (must be in thread context) */
+	struct k_work work;
+
 	/** ADC driver context */
 	struct adc_ctrl_ctx *adc;
 
 	/** TX buffer for sending ADC values */
 	struct tx_buffer *tx_buf;
+
+	/** LED/PWM driver for debug signaling */
+	struct led_pwm_ctx *led;
 
 	/** Streaming active flag */
 	volatile bool active;
@@ -59,6 +68,12 @@ struct adc_stream_ctx {
 
 	/** Current ADC value (cached) */
 	uint16_t last_value;
+
+	/** Debug counter (increments each callback) */
+	volatile uint32_t debug_count;
+
+	/** Padding for reserved/future use */
+	uint8_t _reserved[4];
 };
 
 /* =========================================================================
@@ -77,7 +92,8 @@ struct adc_stream_ctx {
  */
 int adc_stream_init(struct adc_stream_ctx *ctx,
 		    struct adc_ctrl_ctx *adc,
-		    struct tx_buffer *tx_buf);
+		    struct tx_buffer *tx_buf,
+		    struct led_pwm_ctx *led);
 
 /**
  * @brief Start ADC streaming

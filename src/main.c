@@ -294,7 +294,7 @@ int main(void)
 	printk("ADC initialized on GPIO26 (ADC0)\n");
 
 	/* Initialize ADC stream module */
-	if (adc_stream_init(&g_adc_stream, &g_adc, &g_tx_buf) != 0) {
+	if (adc_stream_init(&g_adc_stream, &g_adc, &g_tx_buf, &g_led_pwm) != 0) {
 		printk("ERROR: Failed to initialize ADC stream module\n");
 		return 0;
 	}

@@ -4,35 +4,54 @@
  */
 
 #include "adc_stream.h"
+#include "../drivers/led_pwm.h"
 #include "../drivers/adc_ctrl.h"
 #include "../tx_buffer/tx_buffer.h"
 #include "../protocol/protocol.h"
-#include <zephyr/sys/printk.h>
+
+/* Debug flag - ustaw na 1 aby włączyć pakiety debug */
+#define ADC_STREAM_DEBUG_ENABLED 1
+
+/* Debug codes */
+#define DEBUG_TIMER_START  1
+#define DEBUG_TIMER_CB     2
+#define DEBUG_ADC_READ     3
+#define DEBUG_ADC_ERROR    4
+#define DEBUG_TX_PUT       5
 
 /* =========================================================================
- * TIMER CALLBACK
+ * WORK QUEUE (dla ADC read z thread context)
  * ========================================================================= */
 
 /**
- * @brief Timer expiration callback
- *
- * @details Called periodically to read ADC and send to TX buffer.
- *
- * @param timer Timer structure
+ * @brief Send debug packet to TX buffer
  */
-static void adc_stream_timer_callback(struct k_timer *timer)
+static void send_debug(struct adc_stream_ctx *ctx, uint8_t code)
+{
+	uint8_t debug_pkt[2] = {0xFD, code};  /* DEBUG marker + code */
+	tx_buffer_put_isr(ctx->tx_buf, debug_pkt, sizeof(debug_pkt));
+}
+
+/**
+ * @brief Work item dla ADC read (tylko work może wywołać adc_read)
+ */
+static void adc_stream_work_handler(struct k_work *work)
 {
 	struct adc_stream_ctx *ctx =
-		CONTAINER_OF(timer, struct adc_stream_ctx, timer);
+		CONTAINER_OF(work, struct adc_stream_ctx, work);
 
 	int adc_value;
 	uint8_t response[4];
 	uint8_t crc;
 
-	/* Read ADC */
+	/* Debug: work handler entered */
+	send_debug(ctx, DEBUG_ADC_READ);
+
+	/* Read ADC (teraz w thread context, nie ISR) */
 	adc_value = adc_ctrl_read_channel0(ctx->adc);
 	if (adc_value < 0) {
-		/* ADC error - skip this sample */
+		/* ADC error */
+		send_debug(ctx, DEBUG_ADC_ERROR);
 		return;
 	}
 
@@ -47,8 +66,43 @@ static void adc_stream_timer_callback(struct k_timer *timer)
 	crc = proto_crc8(response, 3);
 	response[3] = crc;
 
-	/* Send to TX buffer */
-	tx_buffer_put(ctx->tx_buf, response, sizeof(response));
+	/* Send to TX buffer (ISR-safe version) */
+	tx_buffer_put_isr(ctx->tx_buf, response, sizeof(response));
+	send_debug(ctx, DEBUG_TX_PUT);
+}
+
+/* =========================================================================
+ * TIMER CALLBACK
+ * ========================================================================= */
+
+/**
+ * @brief Timer expiration callback
+ *
+ * @details Called periodically, submits work queue item for ADC read.
+ *          ADC read must happen in thread context, not ISR.
+ *
+ * @param timer Timer structure
+ */
+static void adc_stream_timer_callback(struct k_timer *timer)
+{
+	struct adc_stream_ctx *ctx =
+		CONTAINER_OF(timer, struct adc_stream_ctx, timer);
+
+	/* Debug: timer callback entered */
+	send_debug(ctx, DEBUG_TIMER_CB);
+
+	/* Increment debug counter */
+	ctx->debug_count++;
+
+	/* Blink LED to indicate callback is running */
+	if (ctx->debug_count % 2 == 0) {
+		led_pwm_set_led(ctx->led, 1);
+	} else {
+		led_pwm_set_led(ctx->led, 0);
+	}
+
+	/* Submit work to system work queue (ADC read musi być w thread context) */
+	k_work_submit(&ctx->work);
 }
 
 /* =========================================================================
@@ -63,11 +117,13 @@ static void adc_stream_timer_callback(struct k_timer *timer)
  * @param ctx ADC stream context to initialize
  * @param adc ADC driver context
  * @param tx_buf TX buffer for sending ADC values
+ * @param led LED/PWM driver context (for debug signaling)
  * @return 0 on success, negative errno on failure
  */
 int adc_stream_init(struct adc_stream_ctx *ctx,
 		    struct adc_ctrl_ctx *adc,
-		    struct tx_buffer *tx_buf)
+		    struct tx_buffer *tx_buf,
+		    struct led_pwm_ctx *led)
 {
 	if (!ctx || !adc || !tx_buf) {
 		return -EINVAL;
@@ -75,12 +131,17 @@ int adc_stream_init(struct adc_stream_ctx *ctx,
 
 	ctx->adc = adc;
 	ctx->tx_buf = tx_buf;
+	ctx->led = led;
 	ctx->active = false;
 	ctx->interval_ms = ADC_STREAM_DEFAULT_INTERVAL_MS;
 	ctx->last_value = 0;
+	ctx->debug_count = 0;
 
 	/* Initialize timer */
 	k_timer_init(&ctx->timer, adc_stream_timer_callback, NULL);
+
+	/* Initialize work item */
+	k_work_init(&ctx->work, adc_stream_work_handler);
 
 	return 0;
 }
@@ -112,11 +173,13 @@ int adc_stream_start(struct adc_stream_ctx *ctx, uint32_t interval_ms)
 
 	ctx->interval_ms = interval_ms;
 	ctx->active = true;
+	ctx->debug_count = 0;
 
 	/* Start periodic timer */
 	k_timer_start(&ctx->timer, K_MSEC(interval_ms), K_MSEC(interval_ms));
 
-	printk("ADC streaming started: %u ms interval\n", interval_ms);
+	/* Debug: timer started (wysyłamy PO timer start, żeby ACK przyszło pierwsze) */
+	send_debug(ctx, DEBUG_TIMER_START);
 
 	return 0;
 }
@@ -142,7 +205,8 @@ int adc_stream_stop(struct adc_stream_ctx *ctx)
 	k_timer_stop(&ctx->timer);
 	ctx->active = false;
 
-	printk("ADC streaming stopped\n");
+	/* Turn off LED */
+	led_pwm_set_led(ctx->led, 0);
 
 	return 0;
 }
