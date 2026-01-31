@@ -47,6 +47,7 @@
 #include "modules/protocol/protocol.h"
 #include "modules/drivers/led_pwm.h"
 #include "modules/drivers/adc_ctrl.h"
+#include "modules/tx_buffer/tx_buffer.h"
 
 /* =========================================================================
  * CONSTANTS AND DEFINITIONS
@@ -69,6 +70,9 @@
  * ------------------------------------------------------------------------- */
 /** @brief UART RX ring buffer size in bytes */
 #define RX_BUF_SIZE  32
+
+/** @brief UART TX ring buffer size in bytes */
+#define TX_BUF_SIZE  32
 
 /* =========================================================================
  * GLOBAL VARIABLES
@@ -99,6 +103,12 @@ static uint8_t rx_buf_data[RX_BUF_SIZE];
 /** @brief RX ring buffer instance */
 static struct ringbuf g_rx_buf;
 
+/** @brief UART TX ring buffer data */
+static uint8_t tx_buf_data[TX_BUF_SIZE];
+
+/** @brief TX ring buffer instance */
+static struct tx_buffer g_tx_buf;
+
 /** @brief Protocol context with state machine and callbacks */
 static struct proto_ctx g_proto;
 
@@ -113,7 +123,7 @@ static struct proto_ctx g_proto;
  */
 static void send_response_cb(uint8_t resp)
 {
-	uart_fifo_fill(uart_dev, &resp, 1);
+	tx_buffer_put(&g_tx_buf, &resp, 1);
 }
 
 /**
@@ -135,7 +145,7 @@ static void send_adc_response_cb(uint8_t cmd, uint8_t adc_h, uint8_t adc_l, uint
 	response[2] = adc_l;
 	response[3] = crc;
 
-	uart_fifo_fill(uart_dev, response, sizeof(response));
+	tx_buffer_put(&g_tx_buf, response, sizeof(response));
 }
 
 /**
@@ -237,6 +247,23 @@ static void process_ring_buffer(void)
 	}
 }
 
+/**
+ * @brief Process TX buffer (main loop context)
+ *
+ * @details Drains TX buffer to UART. Will be replaced by TX thread in Phase 8.
+ */
+static void process_tx_buffer(void)
+{
+	uint8_t data[16];
+	size_t len;
+
+	/* Drain up to 16 bytes at a time */
+	len = tx_buffer_get(&g_tx_buf, data, sizeof(data));
+	if (len > 0) {
+		uart_fifo_fill(uart_dev, data, len);
+	}
+}
+
 /* =========================================================================
  * MAIN
  * ========================================================================= */
@@ -297,6 +324,12 @@ int main(void)
 		return 0;
 	}
 
+	/* Initialize TX ring buffer */
+	if (tx_buffer_init(&g_tx_buf, tx_buf_data, TX_BUF_SIZE) != 0) {
+		printk("ERROR: Failed to initialize TX ring buffer\n");
+		return 0;
+	}
+
 	/* Initialize protocol context */
 	proto_init(&g_proto);
 
@@ -333,6 +366,7 @@ int main(void)
 	/* Main loop */
 	while (true) {
 		process_ring_buffer();
+		process_tx_buffer();
 		k_sleep(K_MSEC(10));
 	}
 
