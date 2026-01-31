@@ -217,8 +217,8 @@ static int pwm_set_usec(uint32_t channel, uint32_t pulse_usec, uint32_t period_u
 /**
  * @brief Set LED state using GPIO (legacy)
  *
- * @details Turns LED ON (state > 0) or OFF (state == 0).
- *          Disables PWM when using GPIO control.
+ * @details Turns built-in LED ON (state > 0) or OFF (state == 0).
+ *          LED is on GPIO25, PWM output is on GPIO16 - independent controls.
  *
  * @param state LED state (0=OFF, 1+=ON)
  */
@@ -226,11 +226,7 @@ static void set_led(uint8_t state)
 {
 	int value = (state > 0) ? 1 : 0;
 
-	/* Disable PWM and switch to GPIO */
-	pwm_set_usec(PWM_CHANNEL_EXT, 0, 1000000 / PWM_FREQ);
 	gpio_pin_set_dt(&led, value);
-
-	atomic_set(&pwm_duty, 0);
 	atomic_set(&led_state, value);
 }
 

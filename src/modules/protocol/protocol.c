@@ -170,7 +170,9 @@ void proto_process_byte(struct proto_ctx *ctx, uint8_t byte)
 			if (ctx->send_adc_resp) {
 				uint8_t adc_h = (adc_value >> 8) & 0xFF;
 				uint8_t adc_l = adc_value & 0xFF;
-				uint8_t crc = proto_crc8(ctx->frame_buf, 1);
+				/* CRC calculated from [CMD][ADC_H][ADC_L] */
+				uint8_t data[3] = {PROTO_CMD_READ_ADC, adc_h, adc_l};
+				uint8_t crc = proto_crc8(data, 3);
 				ctx->send_adc_resp(PROTO_CMD_READ_ADC, adc_h, adc_l, crc);
 			}
 		} else {
