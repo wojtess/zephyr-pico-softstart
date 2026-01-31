@@ -89,15 +89,12 @@ static inline bool ringbuf_is_empty(const struct ringbuf *rb)
 /**
  * @brief Check if buffer is full
  *
- * @details Non-locking read
+ * @details Thread-safe read with spinlock protection
  *
  * @param rb Ring buffer instance
  * @return true if full, false otherwise
  */
-static inline bool ringbuf_is_full(const struct ringbuf *rb)
-{
-	return ((rb->head + 1) % rb->size) == rb->tail;
-}
+bool ringbuf_is_full(struct ringbuf *rb);
 
 /**
  * @brief Wait for data to be available

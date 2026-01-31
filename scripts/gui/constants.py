@@ -15,6 +15,8 @@ class SerialCommand(Enum):
     SEND_LED = "send_led"
     SEND_PWM = "send_pwm"
     READ_ADC = "read_adc"
+    START_STREAM = "start_stream"
+    STOP_STREAM = "stop_stream"
     CHECK_HEALTH = "check_health"
     QUIT = "quit"
 
@@ -28,6 +30,7 @@ class SerialTask:
     pwm_duty: Optional[int] = None
     result_queue: Optional[queue.Queue] = None
     adc_interval: Optional[float] = None  # For auto-read ADC (seconds)
+    stream_interval: Optional[int] = None  # For streaming (milliseconds)
 
 
 @dataclass
@@ -63,6 +66,11 @@ TAGS = {
     "adc_value_voltage": "txt_adc_voltage",
     "adc_series_raw": "series_adc_raw",
     "adc_series_voltage": "series_adc_voltage",
+    # Streaming tags
+    "stream_interval_input": "input_stream_interval",
+    "stream_start_btn": "btn_stream_start",
+    "stream_stop_btn": "btn_stream_stop",
+    "stream_status": "txt_stream_status",
     # Task queue tags
     "queue_label": "txt_queue_label",
     "queue_count": "txt_queue_count",

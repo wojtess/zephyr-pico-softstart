@@ -5,6 +5,7 @@ Callback functions for RP2040 LED Control GUI.
 import queue
 import threading
 import logging
+import time
 from typing import Optional
 
 import serial
@@ -139,6 +140,10 @@ def on_connect_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
 
                     if dpg.does_item_exist(TAGS["adc_read_btn"]):
                         dpg.configure_item(TAGS["adc_read_btn"], enabled=True)
+
+                    # Enable streaming start button
+                    if dpg.does_item_exist(TAGS["stream_start_btn"]):
+                        dpg.configure_item(TAGS["stream_start_btn"], enabled=True)
 
                     update_connection_indicator(True)
                     update_status(result.message, [100, 200, 100])
@@ -320,10 +325,128 @@ def on_adc_read_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
     threading.Thread(target=check_adc, daemon=True).start()
 
 
+def on_stream_start_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Callback for stream start button."""
+    # Get interval from input
+    interval_ms = 100  # default
+    if dpg.does_item_exist(TAGS["stream_interval_input"]):
+        interval_ms = dpg.get_value(TAGS["stream_interval_input"])
+
+    # Validate interval
+    if not (10 <= interval_ms <= 60000):
+        update_status("Invalid interval (10-60000ms)", [255, 100, 100])
+        return
+
+    # Disable start button
+    if dpg.does_item_exist(TAGS["stream_start_btn"]):
+        dpg.configure_item(TAGS["stream_start_btn"], enabled=False)
+
+    update_status(f"Starting ADC stream ({interval_ms}ms)...", [200, 200, 100])
+    dpg.split_frame()
+
+    task = SerialTask(command=SerialCommand.START_STREAM, stream_interval=interval_ms)
+    result_queue = user_data.send_task(task)
+
+    # Check result in separate thread
+    def check_start():
+        try:
+            result = result_queue.get(timeout=2)
+
+            if result.success:
+                update_status(result.message, [100, 200, 100])
+                update_last_response("Stream started")
+
+                # Update UI state
+                if dpg.does_item_exist(TAGS["stream_start_btn"]):
+                    dpg.configure_item(TAGS["stream_start_btn"], enabled=False)
+                if dpg.does_item_exist(TAGS["stream_stop_btn"]):
+                    dpg.configure_item(TAGS["stream_stop_btn"], enabled=True)
+                if dpg.does_item_exist(TAGS["stream_interval_input"]):
+                    dpg.configure_item(TAGS["stream_interval_input"], enabled=False)
+                if dpg.does_item_exist(TAGS["adc_read_btn"]):
+                    dpg.configure_item(TAGS["adc_read_btn"], enabled=False)
+                if dpg.does_item_exist(TAGS["stream_status"]):
+                    dpg.set_value(TAGS["stream_status"], f"Stream: Active ({interval_ms}ms)")
+                    dpg.configure_item(TAGS["stream_status"], color=[100, 255, 100])
+
+            else:
+                # Re-enable start button on error
+                if dpg.does_item_exist(TAGS["stream_start_btn"]):
+                    dpg.configure_item(TAGS["stream_start_btn"], enabled=True)
+
+                # Check if disconnected
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+
+                update_status(f"Stream start error: {result.message}", [255, 100, 100])
+                update_last_response(f"Error: {result.error or 'Unknown'}")
+
+        except queue.Empty:
+            if dpg.does_item_exist(TAGS["stream_start_btn"]):
+                dpg.configure_item(TAGS["stream_start_btn"], enabled=True)
+            update_status("Stream start timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_start, daemon=True).start()
+
+
+def on_stream_stop_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Callback for stream stop button."""
+    # Disable stop button
+    if dpg.does_item_exist(TAGS["stream_stop_btn"]):
+        dpg.configure_item(TAGS["stream_stop_btn"], enabled=False)
+
+    update_status("Stopping ADC stream...", [200, 200, 100])
+    dpg.split_frame()
+
+    task = SerialTask(command=SerialCommand.STOP_STREAM)
+    result_queue = user_data.send_task(task)
+
+    # Check result in separate thread
+    def check_stop():
+        try:
+            result = result_queue.get(timeout=2)
+
+            # Re-enable stop button
+            if dpg.does_item_exist(TAGS["stream_stop_btn"]):
+                dpg.configure_item(TAGS["stream_stop_btn"], enabled=True)
+
+            if result.success:
+                update_status(result.message, [100, 200, 100])
+                update_last_response("Stream stopped")
+
+                # Update UI state
+                if dpg.does_item_exist(TAGS["stream_start_btn"]):
+                    dpg.configure_item(TAGS["stream_start_btn"], enabled=True)
+                if dpg.does_item_exist(TAGS["stream_stop_btn"]):
+                    dpg.configure_item(TAGS["stream_stop_btn"], enabled=False)
+                if dpg.does_item_exist(TAGS["stream_interval_input"]):
+                    dpg.configure_item(TAGS["stream_interval_input"], enabled=True)
+                if dpg.does_item_exist(TAGS["adc_read_btn"]):
+                    dpg.configure_item(TAGS["adc_read_btn"], enabled=True)
+                if dpg.does_item_exist(TAGS["stream_status"]):
+                    dpg.set_value(TAGS["stream_status"], "Stream: Stopped")
+                    dpg.configure_item(TAGS["stream_status"], color=[150, 150, 150])
+
+            else:
+                # Check if disconnected
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+
+                update_status(f"Stream stop error: {result.message}", [255, 100, 100])
+                update_last_response(f"Error: {result.error or 'Unknown'}")
+
+        except queue.Empty:
+            if dpg.does_item_exist(TAGS["stream_stop_btn"]):
+                dpg.configure_item(TAGS["stream_stop_btn"], enabled=True)
+            update_status("Stream stop timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_stop, daemon=True).start()
+
+
 def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
     """Called every frame to check for health check results."""
-    # Note: PWM slider now uses direct callback instead of polling
-
     # Check results from worker thread
     results = user_data.check_results()
 
@@ -338,7 +461,6 @@ def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
                 continue
 
             # Schedule next health check with rate limiting (max 1 per second)
-            import time
             current_time = time.time()
             if current_time - user_data._last_health_check >= user_data._health_check_interval:
                 user_data._last_health_check = current_time

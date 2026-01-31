@@ -69,7 +69,35 @@ def main() -> int:
         dpg.setup_dearpygui()
         dpg.show_viewport()
 
-        # Register frame callback for result checking (runs every frame)
+        # Start plot refresh thread (updates plot when streaming)
+        import threading
+        def plot_refresh_worker():
+            import time
+            while dpg.is_dearpygui_running():
+                try:
+                    if app.is_streaming():
+                        x_axis, raw_series, volt_series = app.get_adc_history()
+                        if dpg.does_item_exist(TAGS["adc_plot"]):
+                            if dpg.does_item_exist(TAGS["adc_series_raw"]):
+                                dpg.set_value(TAGS["adc_series_raw"], [x_axis, raw_series])
+                            if dpg.does_item_exist(TAGS["adc_series_voltage"]):
+                                dpg.set_value(TAGS["adc_series_voltage"], [x_axis, volt_series])
+
+                            # Update value displays with latest data
+                            if raw_series:
+                                latest_raw = raw_series[-1]
+                                latest_voltage = volt_series[-1]
+                                if dpg.does_item_exist(TAGS["adc_value_raw"]):
+                                    dpg.set_value(TAGS["adc_value_raw"], f"{latest_raw}")
+                                if dpg.does_item_exist(TAGS["adc_value_voltage"]):
+                                    dpg.set_value(TAGS["adc_value_voltage"], f"{latest_voltage:.3f} V")
+                    time.sleep(0.05)  # 20 FPS for plot updates
+                except Exception:
+                    break
+
+        threading.Thread(target=plot_refresh_worker, daemon=True).start()
+
+        # Register frame callback for health checks (runs every frame)
         dpg.set_frame_callback(-1, on_frame_callback, user_data=app)
 
         # Initial port scan

@@ -18,7 +18,10 @@ except ImportError:
 # Add parent directory to path for protocol import
 sys.path.insert(0, '.')
 
-from protocol import CMD_READ_ADC, build_adc_frame, parse_adc_response, crc8
+from protocol import (
+    CMD_READ_ADC, build_adc_frame, parse_adc_response, crc8,
+    RESP_ACK, RESP_NACK, RESP_DEBUG, get_error_name
+)
 
 
 def find_acm_port():
@@ -71,8 +74,27 @@ def test_adc():
         ser.write(frame)
         ser.flush()
 
-        # Read response (4 bytes: [CMD][ADC_H][ADC_L][CRC])
-        resp = ser.read(4)
+        # Read response, consuming any debug packets first
+        # Response format: [CMD][ADC_H][ADC_L][CRC] (4 bytes)
+        # Debug packets: [0xFD][code] (2 bytes) - consume silently
+        ser.timeout = 2
+
+        resp = b''
+        while len(resp) < 4:
+            first = ser.read(1)
+            if not first:
+                print("ERROR: No response (timeout)")
+                return 1
+
+            # Check for debug packet marker
+            if first[0] == RESP_DEBUG:
+                code_byte = ser.read(1)
+                if len(code_byte) == 1:
+                    pass  # Debug packet - consumed silently
+                continue
+
+            # First byte of ADC response
+            resp = first + ser.read(3)
 
         if len(resp) == 0:
             print("ERROR: No response (timeout)")

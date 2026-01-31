@@ -99,6 +99,11 @@ def get_selected_port() -> Optional[str]:
 
 def handle_disconnect_state(app: LEDControllerApp) -> None:
     """Handle unexpected disconnect - reset UI state."""
+    # IMPORTANT: Reset streaming state in app to prevent plot update issues
+    with app._lock:
+        app._is_streaming = False
+        app._stream_running = False
+
     if dpg.does_item_exist(TAGS["connect_btn"]):
         dpg.set_item_label(TAGS["connect_btn"], "Connect")
 
@@ -113,6 +118,17 @@ def handle_disconnect_state(app: LEDControllerApp) -> None:
 
     if dpg.does_item_exist(TAGS["adc_read_btn"]):
         dpg.configure_item(TAGS["adc_read_btn"], enabled=False)
+
+    # Reset streaming buttons
+    if dpg.does_item_exist(TAGS["stream_start_btn"]):
+        dpg.configure_item(TAGS["stream_start_btn"], enabled=False)
+    if dpg.does_item_exist(TAGS["stream_stop_btn"]):
+        dpg.configure_item(TAGS["stream_stop_btn"], enabled=False)
+    if dpg.does_item_exist(TAGS["stream_interval_input"]):
+        dpg.configure_item(TAGS["stream_interval_input"], enabled=True)
+    if dpg.does_item_exist(TAGS["stream_status"]):
+        dpg.set_value(TAGS["stream_status"], "Stream: Stopped")
+        dpg.configure_item(TAGS["stream_status"], color=[150, 150, 150])
 
     update_connection_indicator(False)
     update_led_indicator(False)

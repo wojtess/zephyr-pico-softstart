@@ -1,0 +1,34 @@
+# Zephyr RTOS manifest with minimal module allowlist for RP2040 (Raspberry Pi Pico)
+# This only downloads modules needed for the rpi_pico board, saving time and disk space.
+
+manifest:
+  defaults:
+    remote: upstream
+
+  remotes:
+    - name: upstream
+      url-base: https://github.com/zephyrproject-rtos
+
+  projects:
+    - name: zephyr
+      revision: v3.7.0
+      url: https://github.com/zephyrproject-rtos/zephyr
+      west-commands: scripts/west-commands.yml
+      import:
+        # Only import the modules we actually need for RP2040
+        name-allowlist:
+          # ARM Cortex-M core support (REQUIRED)
+          - cmsis
+          # RP2040/Raspberry Pi Pico HAL (REQUIRED)
+          - hal_rpi_pico
+          # C library (usually required)
+          - picolibc
+          # Add more modules below if build fails:
+          # - fatfs        # File system (if needed)
+          # - littlefs     # Alternative file system (if needed)
+          # - mbedtls      # Crypto/TLS (if using crypto)
+          # - lvgl         # Graphics (if using GUI)
+          # - cmsis-dsp    # DSP algorithms (if using DSP)
+
+  self:
+    path: .

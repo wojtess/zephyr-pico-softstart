@@ -51,6 +51,90 @@ def find_acm_port():
     return None
 
 
+class StreamParser:
+    """State machine parser for ADC streaming protocol with error recovery."""
+
+    # Parser states
+    STATE_WAIT_MARKER = 0
+    STATE_STREAM_DATA_ADC_H = 1
+    STATE_STREAM_DATA_ADC_L = 2
+    STATE_STREAM_DATA_CRC = 3
+    STATE_DEBUG_CODE = 4
+
+    def __init__(self):
+        self.state = self.STATE_WAIT_MARKER
+        self.sync_errors = 0
+        self.crc_errors = 0
+        self.debug_packets = 0
+        self.valid_samples = 0
+
+    def reset(self):
+        """Reset parser to initial state."""
+        self.state = self.STATE_WAIT_MARKER
+
+    def process_byte(self, byte_val):
+        """Process a single byte through the state machine.
+
+        Args:
+            byte_val: Integer byte value (0-255)
+
+        Returns:
+            Tuple of (result, value, error_code):
+                - result: 'data', 'debug', 'error', or None
+                - value: ADC value (0-4095) for 'data', debug code for 'debug', 0 for 'error'
+                - error_code: Error code for errors
+        """
+        from protocol import crc8, ERR_CRC
+
+        if self.state == self.STATE_WAIT_MARKER:
+            # Looking for packet type marker
+            if byte_val == CMD_START_STREAM:
+                # Stream data marker: [0x04][ADC_H][ADC_L][CRC]
+                self.state = self.STATE_STREAM_DATA_ADC_H
+                return None, 0, 0
+            elif byte_val == RESP_DEBUG:
+                # Debug marker: [0xFD][code]
+                self.state = self.STATE_DEBUG_CODE
+                return None, 0, 0
+            else:
+                # Unexpected byte - synchronization error
+                self.sync_errors += 1
+                return 'error', byte_val, 0
+
+        elif self.state == self.STATE_STREAM_DATA_ADC_H:
+            # Store ADC high byte
+            self._adc_h = byte_val
+            self.state = self.STATE_STREAM_DATA_ADC_L
+            return None, 0, 0
+
+        elif self.state == self.STATE_STREAM_DATA_ADC_L:
+            # Store ADC low byte
+            self._adc_l = byte_val
+            self.state = self.STATE_STREAM_DATA_CRC
+            return None, 0, 0
+
+        elif self.state == self.STATE_STREAM_DATA_CRC:
+            # Verify CRC and return data
+            calc_crc = crc8(bytes([CMD_START_STREAM, self._adc_h, self._adc_l]))
+            if byte_val == calc_crc:
+                adc_value = (self._adc_h << 8) | self._adc_l
+                self.valid_samples += 1
+                self.state = self.STATE_WAIT_MARKER
+                return 'data', adc_value, 0
+            else:
+                self.crc_errors += 1
+                self.state = self.STATE_WAIT_MARKER
+                return 'error', 0, ERR_CRC
+
+        elif self.state == self.STATE_DEBUG_CODE:
+            # Debug packet complete
+            self.debug_packets += 1
+            self.state = self.STATE_WAIT_MARKER
+            return 'debug', byte_val, 0
+
+        return None, 0, 0
+
+
 def test_adc_streaming(ser, interval_ms):
     """Test ADC streaming
 
@@ -109,47 +193,42 @@ def test_adc_streaming(ser, interval_ms):
     total_adc = 0
     start_time = time.time()
 
+    # Initialize state machine parser
+    parser = StreamParser()
+
     try:
         while True:
-            # Read one byte to determine packet type
-            first = ser.read(1)
-            if not first:
-                time.sleep(0.01)
+            # Read one byte at a time for proper state machine processing
+            byte_data = ser.read(1)
+            if not byte_data:
+                time.sleep(0.001)
                 continue
 
-            pkt_type = first[0]
+            byte_val = byte_data[0]
+            result, value, err_code = parser.process_byte(byte_val)
 
-            # Debug packet: [0xFD][code] - konsumujemy bez wyświetlania
-            if pkt_type == RESP_DEBUG:
-                code_byte = ser.read(1)
-                if len(code_byte) == 1:
-                    pass  # Opcjonalnie: print(f"  [DEBUG] {get_debug_name(debug_code)}")
-                continue
+            if result == 'data':
+                # Valid ADC sample received
+                count += 1
+                total_adc += value
+                voltage = (value / 4095) * 3.3
 
-            # Stream data: [0x04][ADC_H][ADC_L][CRC]
-            if pkt_type == CMD_START_STREAM:
-                adc_h = ser.read(1)
-                adc_l = ser.read(1)
-                crc = ser.read(1)
-                if len(adc_h) == 1 and len(adc_l) == 1 and len(crc) == 1:
-                    resp = bytes([pkt_type]) + adc_h + adc_l + crc
-                    adc_value, err = parse_stream_data(resp)
+                if count % 10 == 0:
+                    # Reconstruct packet for display
+                    pkt_hex = bytes([CMD_START_STREAM, (value >> 8) & 0xFF, value & 0xFF]).hex()
+                    print(f"{count:>8} | {value:>6} | {voltage:>9.3f}V | {pkt_hex:>8}")
 
-                    if adc_value >= 0:
-                        count += 1
-                        total_adc += adc_value
-                        voltage = (adc_value / 4095) * 3.3
+            elif result == 'error':
+                # Synchronization or CRC error
+                if err_code:
+                    print(f"ERROR: CRC error detected at sample {count}")
+                else:
+                    print(f"ERROR: Synchronization error - unexpected byte 0x{value:02X}")
+                    # After sync error, we're already resynchronized (parser reset automatically)
 
-                        if count % 10 == 0:
-                            print(f"{count:>8} | {adc_value:>6} | {voltage:>9.3f}V | {resp.hex():>8}")
-
-                    elif err:
-                        print(f"Sample {count}: ERROR - {get_error_name(err)}")
-                continue
-
-            # Unknown byte - skip and continue
-            if pkt_type != 0x00:
-                print(f"  Unknown byte: 0x{pkt_type:02X}")
+            elif result == 'debug':
+                # Debug packet - silently consumed (counted in parser stats)
+                pass
 
             time.sleep(0.001)
 
@@ -161,9 +240,12 @@ def test_adc_streaming(ser, interval_ms):
 
         print(f"\n{'-'*8}-+-{'-'*6}-+-{'-'*10}-+-{'-'*8}")
         print(f"\nStatistics:")
-        print(f"  Total samples: {count}")
+        print(f"  Valid samples: {count}")
         print(f"  Time elapsed: {elapsed:.2f} seconds")
         print(f"  Actual rate: {rate:.2f} samples/sec")
+        print(f"  Debug packets: {parser.debug_packets}")
+        print(f"  Sync errors: {parser.sync_errors}")
+        print(f"  CRC errors: {parser.crc_errors}")
         if count > 0:
             print(f"  Average ADC: {total_adc / count:.1f}")
             print(f"  Avg voltage: {(total_adc / count / 4095 * 3.3):.3f}V")

@@ -23,11 +23,11 @@ $(VENV_DIR):
 	$(PIP) install -r scripts/requirements.txt
 
 
-$(WS_DIR): | $(VENV_DIR) 
+$(WS_DIR): | $(VENV_DIR)
 	mkdir -p $(WS_DIR)
 
 	@if [ ! -d "$(WS_DIR)/.west" ]; then \
-		cd "$(APP_DIR)" && "$(WEST)" init "$(WS_DIR)"; \
+		cd "$(APP_DIR)" && "$(WEST)" init "$(WS_DIR)" --mf west.yml -o=--depth=1; \
 	fi
 	cd "$(WS_DIR)" && "$(WEST)" update
 	cd "$(WS_DIR)" && "$(WEST)" zephyr-export

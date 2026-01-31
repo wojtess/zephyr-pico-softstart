@@ -16,6 +16,7 @@ from protocol import (
     CMD_SET_LED,
     RESP_ACK,
     RESP_NACK,
+    RESP_DEBUG,
     ERR_CRC,
     ERR_INVALID_CMD,
     ERR_INVALID_VAL,
@@ -39,13 +40,23 @@ def send_led_command(ser: serial.Serial, state: int) -> bool:
     print(f"  Sending: CMD=0x{CMD_SET_LED:02X} VALUE={state} CRC=0x{crc:02X}")
     ser.write(frame)
 
-    # Read response
-    resp = ser.read(1)
-    if not resp:
-        print("  ERROR: No response")
-        return False
+    # Read response, consuming any debug packets first
+    while True:
+        first = ser.read(1)
+        if not first:
+            print("  ERROR: No response")
+            return False
 
-    resp_type, err_code = parse_response(resp)
+        # Check for debug packet marker
+        if first[0] == RESP_DEBUG:
+            code_byte = ser.read(1)
+            if len(code_byte) == 1:
+                pass  # Debug packet - consumed silently
+            continue
+
+        # Not a debug packet - this should be ACK/NACK
+        resp_type, err_code = parse_response(first)
+        break
 
     if resp_type == RESP_ACK:
         print(f"  -> ACK (0x{resp_type:02X}) ✓")

@@ -15,6 +15,8 @@ from .callbacks import (
     on_led_toggle_clicked,
     on_pwm_slider_changed,
     on_adc_read_clicked,
+    on_stream_start_clicked,
+    on_stream_stop_clicked,
 )
 from .utils import find_ports_with_info, update_status
 
@@ -226,6 +228,60 @@ def create_main_window(app: LEDControllerApp) -> None:
                 label="Voltage (V)",
                 parent=y_axis,
             )
+
+        # ADC Streaming section
+        dpg.add_spacer(height=15)
+        dpg.add_separator()
+        dpg.add_spacer(height=10)
+
+        dpg.add_text("ADC Streaming:", color=[200, 200, 200])
+
+        dpg.add_spacer(height=5)
+
+        # Streaming interval input
+        with dpg.group(horizontal=True):
+            dpg.add_text("Interval (ms):", color=[180, 180, 180])
+            dpg.add_spacer(width=5)
+            dpg.add_input_int(
+                tag=TAGS["stream_interval_input"],
+                default_value=100,
+                min_value=10,
+                max_value=60000,
+                width=100,
+            )
+
+        # Streaming buttons
+        dpg.add_spacer(height=8)
+
+        with dpg.group(horizontal=True):
+            dpg.add_button(
+                label="Start Stream",
+                tag=TAGS["stream_start_btn"],
+                callback=on_stream_start_clicked,
+                user_data=app,
+                width=120,
+                enabled=False,
+            )
+
+            dpg.add_spacer(width=10)
+
+            dpg.add_button(
+                label="Stop Stream",
+                tag=TAGS["stream_stop_btn"],
+                callback=on_stream_stop_clicked,
+                user_data=app,
+                width=120,
+                enabled=False,
+            )
+
+        # Streaming status
+        dpg.add_spacer(height=5)
+
+        dpg.add_text(
+            tag=TAGS["stream_status"],
+            default_value="Stream: Stopped",
+            color=[150, 150, 150],
+        )
 
         # Task Queue section
         dpg.add_spacer(height=15)

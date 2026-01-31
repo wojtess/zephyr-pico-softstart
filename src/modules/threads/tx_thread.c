@@ -49,15 +49,9 @@ static void tx_thread_entry(void *p1, void *p2, void *p3)
 	while (true) {
 		/* Check for data availability with short timeout (10ms) */
 		/* This allows TX thread to poll for data from ISR context */
-		int ret = tx_buffer_wait_data(g_tx_ctx->tx_buf, 10);
-		if (ret != 0) {
-			/* Timeout - check if data available anyway (for ISR-sent data) */
-			if (tx_buffer_available(g_tx_ctx->tx_buf) == 0) {
-				continue;
-			}
-		}
+		tx_buffer_wait_data(g_tx_ctx->tx_buf, 10);
 
-		/* Drain available data */
+		/* Drain available data - tx_buffer_get returns 0 if empty */
 		len = tx_buffer_get(g_tx_ctx->tx_buf, data, sizeof(data));
 		if (len > 0) {
 			uart_fifo_fill(g_tx_ctx->uart_dev, data, len);

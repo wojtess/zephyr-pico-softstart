@@ -116,6 +116,22 @@ size_t ringbuf_available(const struct ringbuf *rb)
 	return available;
 }
 
+bool ringbuf_is_full(struct ringbuf *rb)
+{
+	k_spinlock_key_t key;
+	bool full;
+
+	if (!rb) {
+		return false;
+	}
+
+	key = k_spin_lock(&rb->lock);
+	full = ((rb->head + 1) % rb->size) == rb->tail;
+	k_spin_unlock(&rb->lock, key);
+
+	return full;
+}
+
 int ringbuf_wait_data(struct ringbuf *rb, int32_t timeout_ms)
 {
 	if (!rb) {

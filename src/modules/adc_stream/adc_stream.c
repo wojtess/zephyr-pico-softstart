@@ -94,13 +94,6 @@ static void adc_stream_timer_callback(struct k_timer *timer)
 	/* Increment debug counter */
 	ctx->debug_count++;
 
-	/* Blink LED to indicate callback is running */
-	if (ctx->debug_count % 2 == 0) {
-		led_pwm_set_led(ctx->led, 1);
-	} else {
-		led_pwm_set_led(ctx->led, 0);
-	}
-
 	/* Submit work to system work queue (ADC read musi być w thread context) */
 	k_work_submit(&ctx->work);
 }
@@ -204,9 +197,6 @@ int adc_stream_stop(struct adc_stream_ctx *ctx)
 
 	k_timer_stop(&ctx->timer);
 	ctx->active = false;
-
-	/* Turn off LED */
-	led_pwm_set_led(ctx->led, 0);
 
 	return 0;
 }

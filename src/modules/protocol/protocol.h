@@ -147,7 +147,7 @@ struct proto_ctx {
 	enum proto_state state;
 
 	/** Frame buffer for CMD + VALUE + extra (for stream commands) */
-	uint8_t frame_buf[3];
+	uint8_t frame_buf[4];
 
 	/** Callback: LED set command */
 	proto_led_set_cb on_led_set;

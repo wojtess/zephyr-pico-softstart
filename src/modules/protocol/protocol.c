@@ -29,7 +29,7 @@ uint8_t proto_crc8(const uint8_t *data, size_t len)
 			if (crc & 0x80) {
 				crc = (crc << 1) ^ 0x07;
 			} else {
-				crc <<= 1;
+				crc = (crc << 1) & 0xFF;
 			}
 		}
 	}
@@ -109,7 +109,10 @@ void proto_process_byte(struct proto_ctx *ctx, uint8_t byte)
 			ctx->frame_buf[0] = byte;
 			ctx->state = PROTO_STATE_WAIT_STOP_STREAM_CRC;
 		}
-		/* Unknown command - ignore */
+		else {
+			/* Unknown command - reset state to WAIT_CMD */
+			ctx->state = PROTO_STATE_WAIT_CMD;
+		}
 		break;
 
 	case PROTO_STATE_WAIT_VALUE:
@@ -141,15 +144,23 @@ void proto_process_byte(struct proto_ctx *ctx, uint8_t byte)
 		}
 		else if (ctx->frame_buf[0] == PROTO_CMD_SET_PWM) {
 			int ret = 0;
-			if (ctx->on_pwm_set) {
-				ret = ctx->on_pwm_set(ctx->frame_buf[1]);
-			}
-			if (ctx->send_resp) {
-				if (ret == 0) {
-					ctx->send_resp(PROTO_RESP_ACK);
-				} else {
+			/* Validate PWM duty cycle range (0-100) */
+			if (ctx->frame_buf[1] > 100) {
+				if (ctx->send_resp) {
 					ctx->send_resp(PROTO_RESP_NACK);
 					ctx->send_resp(PROTO_ERR_INVALID_VAL);
+				}
+			} else {
+				if (ctx->on_pwm_set) {
+					ret = ctx->on_pwm_set(ctx->frame_buf[1]);
+				}
+				if (ctx->send_resp) {
+					if (ret == 0) {
+						ctx->send_resp(PROTO_RESP_ACK);
+					} else {
+						ctx->send_resp(PROTO_RESP_NACK);
+						ctx->send_resp(PROTO_ERR_INVALID_VAL);
+					}
 				}
 			}
 		}
