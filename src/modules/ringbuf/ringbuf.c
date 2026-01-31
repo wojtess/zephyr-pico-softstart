@@ -16,6 +16,9 @@ int ringbuf_init(struct ringbuf *rb, uint8_t *data, size_t size)
 	rb->size = size;
 	rb->head = 0;
 	rb->tail = 0;
+
+	k_sem_init(&rb->sem_data, 0, size);
+
 	/* Spinlock initialized implicitly in Zephyr 4.x */
 
 	return 0;
@@ -43,6 +46,9 @@ int ringbuf_put(struct ringbuf *rb, uint8_t byte)
 	rb->head = next_head;
 
 	k_spin_unlock(&rb->lock, key);
+
+	/* Signal data available */
+	k_sem_give(&rb->sem_data);
 
 	return 0;
 }
@@ -108,4 +114,13 @@ size_t ringbuf_available(const struct ringbuf *rb)
 	}
 
 	return available;
+}
+
+int ringbuf_wait_data(struct ringbuf *rb, int32_t timeout_ms)
+{
+	if (!rb) {
+		return -EINVAL;
+	}
+
+	return k_sem_take(&rb->sem_data, K_MSEC(timeout_ms));
 }

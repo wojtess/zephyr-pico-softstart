@@ -22,6 +22,7 @@ struct ringbuf {
 	volatile size_t head;          /**< Write position (ISR-modified) */
 	volatile size_t tail;          /**< Read position */
 	struct k_spinlock lock;       /**< Spinlock for ISR safety */
+	struct k_sem sem_data;        /**< Semaphore for signaling data available */
 };
 
 /**
@@ -97,5 +98,16 @@ static inline bool ringbuf_is_full(const struct ringbuf *rb)
 {
 	return ((rb->head + 1) % rb->size) == rb->tail;
 }
+
+/**
+ * @brief Wait for data to be available
+ *
+ * @details Blocks until data is available or timeout.
+ *
+ * @param rb Ring buffer instance
+ * @param timeout_ms Timeout in milliseconds, or INT32_MAX to wait forever
+ * @return 0 if data available, -EINPROGRESS if timeout
+ */
+int ringbuf_wait_data(struct ringbuf *rb, int32_t timeout_ms);
 
 #endif /* RINGBUF_H */

@@ -49,6 +49,7 @@
 #include "modules/drivers/adc_ctrl.h"
 #include "modules/tx_buffer/tx_buffer.h"
 #include "modules/threads/tx_thread.h"
+#include "modules/threads/rx_thread.h"
 
 /* =========================================================================
  * CONSTANTS AND DEFINITIONS
@@ -112,6 +113,9 @@ static struct tx_buffer g_tx_buf;
 
 /** @brief TX thread context */
 static struct tx_thread_ctx g_tx_thread;
+
+/** @brief RX thread context */
+static struct rx_thread_ctx g_rx_thread;
 
 /** @brief Protocol context with state machine and callbacks */
 static struct proto_ctx g_proto;
@@ -184,32 +188,6 @@ static int adc_read_cb(void)
 }
 
 /* =========================================================================
- * RING BUFFER FUNCTIONS (ISR-safe)
- * ========================================================================= */
-
-/**
- * @brief Put byte into ring buffer (ISR-safe, thread-safe)
- *
- * @param byte Byte to add
- * @return 0 on success, -ENOBUFS if buffer full
- */
-static int ring_buf_put_byte(uint8_t byte)
-{
-	return ringbuf_put(&g_rx_buf, byte);
-}
-
-/**
- * @brief Get byte from ring buffer (thread-safe)
- *
- * @param byte Pointer to store retrieved byte
- * @return 0 on success, -ENOMSG if buffer empty
- */
-static int ring_buf_get_byte(uint8_t *byte)
-{
-	return ringbuf_get(&g_rx_buf, byte);
-}
-
-/* =========================================================================
  * UART INTERRUPT HANDLERS
  * ========================================================================= */
 
@@ -231,23 +209,8 @@ static void uart_rx_handler(const struct device *dev, void *user_data)
 		len = uart_fifo_read(dev, buf, sizeof(buf));
 
 		for (uint32_t i = 0; i < len; i++) {
-			ring_buf_put_byte(buf[i]);
+			ringbuf_put(&g_rx_buf, buf[i]);
 		}
-	}
-}
-
-/**
- * @brief Process ring buffer contents (main loop context)
- *
- * @details Reads bytes from ring buffer and processes them
- *          through the protocol state machine.
- */
-static void process_ring_buffer(void)
-{
-	uint8_t byte;
-
-	while (ring_buf_get_byte(&byte) == 0) {
-		proto_process_byte(&g_proto, byte);
 	}
 }
 
@@ -323,6 +286,12 @@ int main(void)
 		return 0;
 	}
 
+	/* Start RX thread */
+	if (rx_thread_start(&g_rx_thread, &g_rx_buf, &g_proto) != 0) {
+		printk("ERROR: Failed to start RX thread\n");
+		return 0;
+	}
+
 	/* Initialize protocol context */
 	proto_init(&g_proto);
 
@@ -356,10 +325,9 @@ int main(void)
 	uart_irq_callback_set(uart_dev, uart_rx_handler);
 	uart_irq_rx_enable(uart_dev);
 
-	/* Main loop */
+	/* Main loop - idle (all work done in threads) */
 	while (true) {
-		process_ring_buffer();
-		k_sleep(K_MSEC(10));
+		k_sleep(K_MSEC(1000));
 	}
 
 	return 0;
