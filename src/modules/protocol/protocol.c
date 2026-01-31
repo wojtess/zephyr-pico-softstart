@@ -62,6 +62,8 @@ void proto_init(struct proto_ctx *ctx)
 	ctx->on_led_set = NULL;
 	ctx->on_pwm_set = NULL;
 	ctx->on_adc_read = NULL;
+	ctx->on_stream_start = NULL;
+	ctx->on_stream_stop = NULL;
 	ctx->send_resp = NULL;
 	ctx->send_adc_resp = NULL;
 }
@@ -97,6 +99,14 @@ void proto_process_byte(struct proto_ctx *ctx, uint8_t byte)
 		else if (byte == PROTO_CMD_READ_ADC) {
 			ctx->frame_buf[0] = byte;
 			ctx->state = PROTO_STATE_WAIT_CRC_ADC;
+		}
+		else if (byte == PROTO_CMD_START_STREAM) {
+			ctx->frame_buf[0] = byte;
+			ctx->state = PROTO_STATE_WAIT_STREAM_INT_H;
+		}
+		else if (byte == PROTO_CMD_STOP_STREAM) {
+			ctx->frame_buf[0] = byte;
+			ctx->state = PROTO_STATE_WAIT_STOP_STREAM_CRC;
 		}
 		/* Unknown command - ignore */
 		break;
@@ -179,6 +189,85 @@ void proto_process_byte(struct proto_ctx *ctx, uint8_t byte)
 			if (ctx->send_resp) {
 				ctx->send_resp(PROTO_RESP_NACK);
 				ctx->send_resp(PROTO_ERR_INVALID_CMD);  /* ADC error */
+			}
+		}
+
+		ctx->state = PROTO_STATE_WAIT_CMD;
+		break;
+	}
+
+	case PROTO_STATE_WAIT_STREAM_INT_H:
+		/* Store interval high byte */
+		ctx->frame_buf[1] = byte;
+		ctx->state = PROTO_STATE_WAIT_STREAM_INT_L;
+		break;
+
+	case PROTO_STATE_WAIT_STREAM_INT_L:
+		/* Store interval low byte */
+		ctx->frame_buf[2] = byte;
+		ctx->state = PROTO_STATE_WAIT_STREAM_CRC;
+		break;
+
+	case PROTO_STATE_WAIT_STREAM_CRC:
+	{
+		/* Verify CRC for 4-byte frame [CMD][INT_H][INT_L][CRC] */
+		uint8_t calculated_crc = proto_crc8(ctx->frame_buf, 3);
+		if (byte != calculated_crc) {
+			if (ctx->send_resp) {
+				ctx->send_resp(PROTO_RESP_NACK);
+				ctx->send_resp(PROTO_ERR_CRC);
+			}
+			ctx->state = PROTO_STATE_WAIT_CMD;
+			break;
+		}
+
+		/* Calculate interval from 2 bytes */
+		uint32_t interval = (ctx->frame_buf[1] << 8) | ctx->frame_buf[2];
+
+		/* Execute start stream command */
+		int ret = 0;
+		if (ctx->on_stream_start) {
+			ret = ctx->on_stream_start(interval);
+		}
+
+		if (ctx->send_resp) {
+			if (ret == 0) {
+				ctx->send_resp(PROTO_RESP_ACK);
+			} else {
+				ctx->send_resp(PROTO_RESP_NACK);
+				ctx->send_resp(PROTO_ERR_INVALID_VAL);
+			}
+		}
+
+		ctx->state = PROTO_STATE_WAIT_CMD;
+		break;
+	}
+
+	case PROTO_STATE_WAIT_STOP_STREAM_CRC:
+	{
+		/* Verify CRC for 2-byte frame [CMD][CRC] */
+		uint8_t calculated_crc = proto_crc8(&ctx->frame_buf[0], 1);
+		if (byte != calculated_crc) {
+			if (ctx->send_resp) {
+				ctx->send_resp(PROTO_RESP_NACK);
+				ctx->send_resp(PROTO_ERR_CRC);
+			}
+			ctx->state = PROTO_STATE_WAIT_CMD;
+			break;
+		}
+
+		/* Execute stop stream command */
+		int ret = 0;
+		if (ctx->on_stream_stop) {
+			ret = ctx->on_stream_stop();
+		}
+
+		if (ctx->send_resp) {
+			if (ret == 0) {
+				ctx->send_resp(PROTO_RESP_ACK);
+			} else {
+				ctx->send_resp(PROTO_RESP_NACK);
+				ctx->send_resp(PROTO_ERR_INVALID_CMD);
 			}
 		}
 

@@ -25,6 +25,12 @@
 /** @brief Command byte for ADC read request */
 #define PROTO_CMD_READ_ADC     0x03
 
+/** @brief Command byte for start ADC streaming */
+#define PROTO_CMD_START_STREAM 0x04
+
+/** @brief Command byte for stop ADC streaming */
+#define PROTO_CMD_STOP_STREAM  0x05
+
 /** @brief Positive response (ACK) */
 #define PROTO_RESP_ACK         0xFF
 
@@ -48,10 +54,14 @@
  * @brief Protocol state machine states
  */
 enum proto_state {
-	PROTO_STATE_WAIT_CMD,     /**< Waiting for command byte */
-	PROTO_STATE_WAIT_VALUE,   /**< Waiting for value byte */
-	PROTO_STATE_WAIT_CRC,     /**< Waiting for CRC byte (3-byte frame) */
-	PROTO_STATE_WAIT_CRC_ADC, /**< Waiting for CRC byte (2-byte frame for ADC) */
+	PROTO_STATE_WAIT_CMD,               /**< Waiting for command byte */
+	PROTO_STATE_WAIT_VALUE,             /**< Waiting for value byte */
+	PROTO_STATE_WAIT_CRC,               /**< Waiting for CRC byte (3-byte frame) */
+	PROTO_STATE_WAIT_CRC_ADC,           /**< Waiting for CRC byte (2-byte frame for ADC) */
+	PROTO_STATE_WAIT_STREAM_INT_H,      /**< Waiting for interval high byte (stream) */
+	PROTO_STATE_WAIT_STREAM_INT_L,      /**< Waiting for interval low byte (stream) */
+	PROTO_STATE_WAIT_STREAM_CRC,        /**< Waiting for CRC byte (START_STREAM) */
+	PROTO_STATE_WAIT_STOP_STREAM_CRC,   /**< Waiting for CRC byte (STOP_STREAM) */
 };
 
 /* =========================================================================
@@ -79,6 +89,21 @@ typedef int (*proto_pwm_set_cb)(uint8_t duty);
  * @return ADC value (0-4095), or negative on error
  */
 typedef int (*proto_adc_read_cb)(void);
+
+/**
+ * @brief Callback type for start ADC streaming
+ *
+ * @param interval_ms Sampling interval in milliseconds
+ * @return 0 on success, negative on failure
+ */
+typedef int (*proto_stream_start_cb)(uint32_t interval_ms);
+
+/**
+ * @brief Callback type for stop ADC streaming
+ *
+ * @return 0 on success, negative on failure
+ */
+typedef int (*proto_stream_stop_cb)(void);
 
 /**
  * @brief Callback type for sending response byte
@@ -111,8 +136,8 @@ struct proto_ctx {
 	/** Current state machine state */
 	enum proto_state state;
 
-	/** Frame buffer for CMD + VALUE */
-	uint8_t frame_buf[2];
+	/** Frame buffer for CMD + VALUE + extra (for stream commands) */
+	uint8_t frame_buf[3];
 
 	/** Callback: LED set command */
 	proto_led_set_cb on_led_set;
@@ -122,6 +147,12 @@ struct proto_ctx {
 
 	/** Callback: ADC read command */
 	proto_adc_read_cb on_adc_read;
+
+	/** Callback: Start ADC streaming */
+	proto_stream_start_cb on_stream_start;
+
+	/** Callback: Stop ADC streaming */
+	proto_stream_stop_cb on_stream_stop;
 
 	/** Callback: Send response byte */
 	proto_send_resp_cb send_resp;

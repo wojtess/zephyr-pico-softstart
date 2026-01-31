@@ -13,4 +13,5 @@ target_sources(app PRIVATE
     src/modules/tx_buffer/tx_buffer.c
     src/modules/threads/tx_thread.c
     src/modules/threads/rx_thread.c
+    src/modules/adc_stream/adc_stream.c
 )

@@ -50,6 +50,7 @@
 #include "modules/tx_buffer/tx_buffer.h"
 #include "modules/threads/tx_thread.h"
 #include "modules/threads/rx_thread.h"
+#include "modules/adc_stream/adc_stream.h"
 
 /* =========================================================================
  * CONSTANTS AND DEFINITIONS
@@ -116,6 +117,9 @@ static struct tx_thread_ctx g_tx_thread;
 
 /** @brief RX thread context */
 static struct rx_thread_ctx g_rx_thread;
+
+/** @brief ADC stream context */
+static struct adc_stream_ctx g_adc_stream;
 
 /** @brief Protocol context with state machine and callbacks */
 static struct proto_ctx g_proto;
@@ -185,6 +189,27 @@ static int pwm_set_cb(uint8_t duty)
 static int adc_read_cb(void)
 {
 	return adc_ctrl_read_channel0(&g_adc);
+}
+
+/**
+ * @brief Start ADC streaming callback for protocol module
+ *
+ * @param interval_ms Sampling interval in milliseconds
+ * @return 0 on success, negative on failure
+ */
+static int stream_start_cb(uint32_t interval_ms)
+{
+	return adc_stream_start(&g_adc_stream, interval_ms);
+}
+
+/**
+ * @brief Stop ADC streaming callback for protocol module
+ *
+ * @return 0 on success, negative on failure
+ */
+static int stream_stop_cb(void)
+{
+	return adc_stream_stop(&g_adc_stream);
 }
 
 /* =========================================================================
@@ -268,6 +293,12 @@ int main(void)
 	}
 	printk("ADC initialized on GPIO26 (ADC0)\n");
 
+	/* Initialize ADC stream module */
+	if (adc_stream_init(&g_adc_stream, &g_adc, &g_tx_buf) != 0) {
+		printk("ERROR: Failed to initialize ADC stream module\n");
+		return 0;
+	}
+
 	/* Initialize RX ring buffer */
 	if (ringbuf_init(&g_rx_buf, rx_buf_data, RX_BUF_SIZE) != 0) {
 		printk("ERROR: Failed to initialize RX ring buffer\n");
@@ -299,6 +330,8 @@ int main(void)
 	g_proto.on_led_set = led_set_cb;
 	g_proto.on_pwm_set = pwm_set_cb;
 	g_proto.on_adc_read = adc_read_cb;
+	g_proto.on_stream_start = stream_start_cb;
+	g_proto.on_stream_stop = stream_stop_cb;
 	g_proto.send_resp = send_response_cb;
 	g_proto.send_adc_resp = send_adc_response_cb;
 
