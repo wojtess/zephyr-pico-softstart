@@ -43,6 +43,7 @@
 #include <zephyr/sys/atomic.h>
 #include <zephyr/spinlock.h>
 #include <zephyr/sys/__assert.h>
+#include "modules/ringbuf/ringbuf.h"
 
 /* =========================================================================
  * CONSTANTS AND DEFINITIONS
@@ -141,17 +142,11 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED_NODE, gpios);
  * FUNCTION PROTOTYPES
  * ========================================================================= */
 
-/** @brief UART RX ring buffer */
-static uint8_t rx_buf[RX_BUF_SIZE];
+/** @brief UART RX ring buffer data */
+static uint8_t rx_buf_data[RX_BUF_SIZE];
 
-/** @brief Ring buffer head pointer (write position) */
-static volatile size_t rx_head = 0;
-
-/** @brief Ring buffer tail pointer (read position) */
-static volatile size_t rx_tail = 0;
-
-/** @brief Spinlock for ring buffer ISR safety */
-static struct k_spinlock rx_buf_lock;
+/** @brief RX ring buffer instance */
+static struct ringbuf g_rx_buf;
 
 /** @brief Current protocol state machine state */
 static enum proto_state proto_state = STATE_WAIT_CMD;
@@ -347,18 +342,7 @@ static int read_adc_channel0(void)
  */
 static void ring_buf_clear(void)
 {
-	k_spinlock_key_t key = k_spin_lock(&rx_buf_lock);
-
-	/* Physically clear all bytes in the buffer to prevent data leakage */
-	for (size_t i = 0; i < RX_BUF_SIZE; i++) {
-		rx_buf[i] = 0;
-	}
-
-	/* Reset pointers */
-	rx_head = 0;
-	rx_tail = 0;
-
-	k_spin_unlock(&rx_buf_lock, key);
+	ringbuf_clear(&g_rx_buf);
 }
 
 /**
@@ -483,51 +467,22 @@ static void process_byte(uint8_t byte)
  * @brief Put byte into ring buffer (ISR-safe, thread-safe)
  *
  * @param byte Byte to add
- * @return true on success, false if buffer full
+ * @return 0 on success, -ENOBUFS if buffer full
  */
-static bool ring_buf_put_byte(uint8_t byte)
+static int ring_buf_put_byte(uint8_t byte)
 {
-	k_spinlock_key_t key;
-	size_t next_head;
-	bool success = false;
-
-	key = k_spin_lock(&rx_buf_lock);
-
-	next_head = (rx_head + 1) % RX_BUF_SIZE;
-
-	if (next_head != rx_tail) {
-		rx_buf[rx_head] = byte;
-		rx_head = next_head;
-		success = true;
-	}
-
-	k_spin_unlock(&rx_buf_lock, key);
-
-	return success;
+	return ringbuf_put(&g_rx_buf, byte);
 }
 
 /**
  * @brief Get byte from ring buffer (thread-safe)
  *
  * @param byte Pointer to store retrieved byte
- * @return true on success, false if buffer empty
+ * @return 0 on success, -ENOMSG if buffer empty
  */
-static bool ring_buf_get_byte(uint8_t *byte)
+static int ring_buf_get_byte(uint8_t *byte)
 {
-	k_spinlock_key_t key;
-	bool success = false;
-
-	key = k_spin_lock(&rx_buf_lock);
-
-	if (rx_head != rx_tail) {
-		*byte = rx_buf[rx_tail];
-		rx_tail = (rx_tail + 1) % RX_BUF_SIZE;
-		success = true;
-	}
-
-	k_spin_unlock(&rx_buf_lock, key);
-
-	return success;
+	return ringbuf_get(&g_rx_buf, byte);
 }
 
 /* =========================================================================
@@ -567,7 +522,7 @@ static void process_ring_buffer(void)
 {
 	uint8_t byte;
 
-	while (ring_buf_get_byte(&byte)) {
+	while (ring_buf_get_byte(&byte) == 0) {
 		process_byte(byte);
 	}
 }
@@ -620,6 +575,12 @@ int main(void)
 	}
 
 	gpio_pin_configure_dt(&led, GPIO_OUTPUT);
+
+	/* Initialize RX ring buffer */
+	if (ringbuf_init(&g_rx_buf, rx_buf_data, RX_BUF_SIZE) != 0) {
+		printk("ERROR: Failed to initialize RX ring buffer\n");
+		return 0;
+	}
 
 	/* Wait for DTR */
 	printk("Waiting for USB connection...\n");
