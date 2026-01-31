@@ -8,10 +8,14 @@ Implements binary UART protocol with CRC-8.
 Protocol:
     Standard frame: [CMD][VALUE][CRC8] - 3 bytes
     ADC frame: [CMD][CRC8] - 2 bytes
+    Stream start: [CMD][INT_H][INT_L][CRC8] - 4 bytes
+    Stream stop: [CMD][CRC8] - 2 bytes
 
     CMD 0x01 = SET LED (0=OFF, 1+=ON) - Legacy ON/OFF
     CMD 0x02 = SET PWM DUTY (0-100, 0%=OFF, 100%=full)
     CMD 0x03 = READ ADC - Request ADC reading, response: [0x03][ADC_H][ADC_L][CRC8]
+    CMD 0x04 = START ADC STREAMING - Start periodic ADC sampling
+    CMD 0x05 = STOP ADC STREAMING - Stop periodic ADC sampling
 
     Response: ACK 0xFF or NACK 0xFE + error code
     ADC response: 12-bit value (0-4095) representing 0-3.3V
@@ -25,9 +29,12 @@ from typing import Tuple
 CMD_SET_LED = 0x01
 CMD_SET_PWM = 0x02
 CMD_READ_ADC = 0x03
+CMD_START_STREAM = 0x04
+CMD_STOP_STREAM = 0x05
 
 RESP_ACK = 0xFF
 RESP_NACK = 0xFE
+RESP_DEBUG = 0xFD
 
 ERR_CRC = 0x01
 ERR_INVALID_CMD = 0x02
@@ -152,3 +159,90 @@ def get_error_name(error_code: int) -> str:
         ERR_INVALID_VAL: "Invalid value",
     }
     return errors.get(error_code, f"Unknown error {error_code}")
+
+
+# Debug code names for ADC streaming
+DEBUG_NAMES = {
+    1: "TIMER_START",
+    2: "TIMER_CB",
+    3: "ADC_READ",
+    4: "ADC_ERROR",
+    5: "TX_PUT",
+}
+
+
+def get_debug_name(debug_code: int) -> str:
+    """Get human-readable debug name from debug code
+
+    Args:
+        debug_code: Debug code from DEBUG response
+
+    Returns:
+        Human-readable debug description
+    """
+    return DEBUG_NAMES.get(debug_code, f"DEBUG_{debug_code}")
+
+
+def build_stream_start_frame(interval_ms: int) -> bytes:
+    """Build a stream start request frame (4-byte frame)
+
+    Frame format: [CMD_START_STREAM][INTERVAL_H][INTERVAL_L][CRC8]
+
+    Args:
+        interval_ms: Sampling interval in milliseconds (10-60000)
+
+    Returns:
+        Complete 4-byte frame
+    """
+    if not (10 <= interval_ms <= 60000):
+        raise ValueError(f"Interval must be 10-60000 ms, got {interval_ms}")
+
+    interval_h = (interval_ms >> 8) & 0xFF
+    interval_l = interval_ms & 0xFF
+    cmd_interval = bytes([CMD_START_STREAM, interval_h, interval_l])
+    checksum = crc8(cmd_interval)
+    return cmd_interval + bytes([checksum])
+
+
+def build_stream_stop_frame() -> bytes:
+    """Build a stream stop request frame (2-byte frame)
+
+    Frame format: [CMD_STOP_STREAM][CRC8]
+
+    Returns:
+        Complete 2-byte frame
+    """
+    cmd_byte = bytes([CMD_STOP_STREAM])
+    checksum = crc8(cmd_byte)
+    return cmd_byte + bytes([checksum])
+
+
+def parse_stream_data(resp: bytes) -> Tuple[int, int]:
+    """Parse ADC streaming data response from device
+
+    Response format: [CMD_START_STREAM][ADC_H][ADC_L][CRC8]
+    (Note: Uses CMD_START_STREAM as data marker)
+
+    Args:
+        resp: Response bytes (4 bytes)
+
+    Returns:
+        Tuple of (adc_value, error_code)
+        - adc_value: 12-bit ADC value (0-4095), or -1 on error
+        - error_code: 0 for success, error code otherwise
+    """
+    if not resp or len(resp) < 4:
+        return -1, 0
+
+    # Verify response type (should be CMD_START_STREAM as data marker)
+    if resp[0] != CMD_START_STREAM:
+        return -1, ERR_INVALID_CMD
+
+    # Verify CRC
+    calculated_crc = crc8(resp[:3])
+    if resp[3] != calculated_crc:
+        return -1, ERR_CRC
+
+    # Parse ADC value (12-bit, big-endian)
+    adc_value = (resp[1] << 8) | resp[2]
+    return adc_value, 0
