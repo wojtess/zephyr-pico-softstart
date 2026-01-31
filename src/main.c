@@ -45,6 +45,7 @@
 #include <zephyr/sys/__assert.h>
 #include "modules/ringbuf/ringbuf.h"
 #include "modules/protocol/protocol.h"
+#include "modules/drivers/led_pwm.h"
 
 /* =========================================================================
  * CONSTANTS AND DEFINITIONS
@@ -58,12 +59,6 @@
 
 /** @brief PWM device (all channels) */
 #define PWM_DEV_NODE DT_NODELABEL(pwm)
-
-/** @brief PWM channel for external output (GPIO16 = PWM0 Channel A) */
-#define PWM_CHANNEL_EXT 0
-
-/** @brief PWM frequency in Hz */
-#define PWM_FREQ 1000
 
 /** @brief ADC device node from device tree */
 #define ADC_NODE DT_NODELABEL(adc)
@@ -81,12 +76,6 @@
  * GLOBAL VARIABLES
  * ========================================================================= */
 
-/** @brief Current LED state (atomic for thread safety) */
-static atomic_val_t led_state = ATOMIC_INIT(0);
-
-/** @brief Current PWM duty cycle (0-100, atomic for thread safety) */
-static atomic_val_t pwm_duty = ATOMIC_INIT(0);
-
 /** @brief Cached UART device pointer */
 static const struct device *uart_dev;
 
@@ -96,8 +85,11 @@ static const struct device *pwm_dev;
 /** @brief Cached ADC device pointer */
 static const struct device *adc_dev;
 
-/** @brief GPIO pin specification for LED from device tree */
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED_NODE, gpios);
+/** @brief LED GPIO DT spec (for led_pwm module) */
+static const struct gpio_dt_spec led_dt_spec = GPIO_DT_SPEC_GET(LED_NODE, gpios);
+
+/** @brief LED/PWM driver context */
+static struct led_pwm_ctx g_led_pwm;
 
 /* =========================================================================
  * FUNCTION PROTOTYPES
@@ -117,8 +109,6 @@ static struct proto_ctx g_proto;
  * ========================================================================= */
 
 /* Forward declarations for callbacks */
-static void set_led(uint8_t state);
-static int set_pwm_duty(uint8_t duty);
 static int read_adc_channel0(void);
 
 /**
@@ -160,7 +150,7 @@ static void send_adc_response_cb(uint8_t cmd, uint8_t adc_h, uint8_t adc_l, uint
  */
 static void led_set_cb(uint8_t state)
 {
-	set_led(state);
+	led_pwm_set_led(&g_led_pwm, state);
 }
 
 /**
@@ -171,7 +161,7 @@ static void led_set_cb(uint8_t state)
  */
 static int pwm_set_cb(uint8_t duty)
 {
-	return set_pwm_duty(duty);
+	return led_pwm_set_duty(&g_led_pwm, duty);
 }
 
 /**
@@ -182,93 +172,6 @@ static int pwm_set_cb(uint8_t duty)
 static int adc_read_cb(void)
 {
 	return read_adc_channel0();
-}
-
-/**
- * @brief Set PWM using microseconds (helper for new API)
- *
- * @param channel PWM channel
- * @param pulse_usec Pulse width in microseconds
- * @param period_usec Period in microseconds
- * @return 0 on success, negative on error
- */
-static int pwm_set_usec(uint32_t channel, uint32_t pulse_usec, uint32_t period_usec)
-{
-	uint64_t cycles_per_sec;
-	int ret;
-
-	/* Get clock frequency */
-	ret = pwm_get_cycles_per_sec(pwm_dev, channel, &cycles_per_sec);
-	if (ret != 0) {
-		return ret;
-	}
-
-	/* Convert microseconds to cycles */
-	uint64_t period_cycles = (period_usec * cycles_per_sec) / 1000000ULL;
-	uint64_t pulse_cycles = (pulse_usec * cycles_per_sec) / 1000000ULL;
-
-	return pwm_set_cycles(pwm_dev, channel, period_cycles, pulse_cycles, 0);
-}
-
-/* =========================================================================
- * LED/PWM CONTROL FUNCTIONS
- * ========================================================================= */
-
-/**
- * @brief Set LED state using GPIO (legacy)
- *
- * @details Turns built-in LED ON (state > 0) or OFF (state == 0).
- *          LED is on GPIO25, PWM output is on GPIO16 - independent controls.
- *
- * @param state LED state (0=OFF, 1+=ON)
- */
-static void set_led(uint8_t state)
-{
-	int value = (state > 0) ? 1 : 0;
-
-	gpio_pin_set_dt(&led, value);
-	atomic_set(&led_state, value);
-}
-
-/**
- * @brief Set PWM duty cycle for LED
- *
- * @details Sets PWM duty cycle (0-100%).
- *          Duty cycle 0 = LED OFF, 100 = LED full brightness.
- *
- * @param duty Duty cycle (0-100)
- * @return 0 on success, -1 on invalid value
- */
-static int set_pwm_duty(uint8_t duty)
-{
-	if (duty > 100) {
-		return -1;  /* Invalid value */
-	}
-
-	/* Duty cycle 0 = OFF */
-	if (duty == 0) {
-		pwm_set_usec(PWM_CHANNEL_EXT, 0, 1000000 / PWM_FREQ);
-		gpio_pin_set_dt(&led, 0);
-		atomic_set(&pwm_duty, 0);
-		atomic_set(&led_state, 0);
-		return 0;
-	}
-
-	/* Calculate pulse period in microseconds */
-	uint32_t period = 1000000 / PWM_FREQ;  // 1000us for 1kHz
-
-	/* Calculate pulse width for duty cycle */
-	uint32_t pulse_width = (period * duty) / 100;
-
-	/* Set PWM */
-	int ret = pwm_set_usec(PWM_CHANNEL_EXT, pulse_width, period);
-
-	if (ret == 0) {
-		atomic_set(&pwm_duty, duty);
-		atomic_set(&led_state, duty > 0 ? 1 : 0);
-	}
-
-	return ret;
 }
 
 /* =========================================================================
@@ -320,16 +223,6 @@ static int read_adc_channel0(void)
  *
  * @param adc_value 12-bit ADC value (0-4095)
  */
-/**
- * @brief Clear ring buffer by resetting head and tail pointers
- *
- * @details Thread-safe with spinlock protection
- */
-static void ring_buf_clear(void)
-{
-	ringbuf_clear(&g_rx_buf);
-}
-
 /* =========================================================================
  * RING BUFFER FUNCTIONS (ISR-safe)
  * ========================================================================= */
@@ -439,13 +332,12 @@ int main(void)
 	}
 	printk("ADC initialized on GPIO26 (ADC0)\n");
 
-	/* Configure LED GPIO */
-	if (!gpio_is_ready_dt(&led)) {
-		printk("ERROR: LED device not ready\n");
+	/* Initialize LED/PWM driver */
+	if (led_pwm_init(&g_led_pwm, pwm_dev, &led_dt_spec) != 0) {
+		printk("ERROR: Failed to initialize LED/PWM driver\n");
 		return 0;
 	}
-
-	gpio_pin_configure_dt(&led, GPIO_OUTPUT);
+	printk("LED/PWM initialized: LED OFF (PWM 0%%)\n");
 
 	/* Initialize RX ring buffer */
 	if (ringbuf_init(&g_rx_buf, rx_buf_data, RX_BUF_SIZE) != 0) {
@@ -485,10 +377,6 @@ int main(void)
 	/* Setup UART RX interrupt */
 	uart_irq_callback_set(uart_dev, uart_rx_handler);
 	uart_irq_rx_enable(uart_dev);
-
-	/* Initialize: LED OFF, PWM 0% */
-	set_led(0);
-	printk("LED initialized: OFF (PWM 0%%)\n");
 
 	/* Main loop */
 	while (true) {

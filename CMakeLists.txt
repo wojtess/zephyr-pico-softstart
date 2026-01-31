@@ -8,4 +8,5 @@ target_sources(app PRIVATE
     src/main.c
     src/modules/ringbuf/ringbuf.c
     src/modules/protocol/protocol.c
+    src/modules/drivers/led_pwm.c
 )
