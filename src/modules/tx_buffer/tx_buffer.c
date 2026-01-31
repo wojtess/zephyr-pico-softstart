@@ -91,6 +91,60 @@ int tx_buffer_put(struct tx_buffer *tb, const uint8_t *data, size_t len)
 }
 
 /**
+ * @brief Put data into TX buffer (ISR-safe version)
+ *
+ * @details ISR-safe variant that doesn't use semaphore.
+ *          Caller must manually wake TX thread if needed.
+ *
+ * @param tb TX buffer context
+ * @param data Data to write
+ * @param len Length of data
+ * @return Number of bytes written, or -ENOBUFS if buffer full
+ */
+int tx_buffer_put_isr(struct tx_buffer *tb, const uint8_t *data, size_t len)
+{
+	k_spinlock_key_t key;
+	size_t available;
+	size_t to_write;
+
+	if (!tb || !data) {
+		return -EINVAL;
+	}
+
+	if (len == 0) {
+		return 0;
+	}
+
+	key = k_spin_lock(&tb->lock);
+
+	/* Calculate available space */
+	if (tb->head >= tb->tail) {
+		available = tb->size - (tb->head - tb->tail);
+	} else {
+		available = tb->tail - tb->head;
+	}
+
+	if (len > available - 1) {  /* -1 for full check */
+		k_spin_unlock(&tb->lock, key);
+		return -ENOBUFS;
+	}
+
+	/* Write data */
+	to_write = len;
+	for (size_t i = 0; i < to_write; i++) {
+		tb->buffer[tb->head] = data[i];
+		tb->head = (tb->head + 1) % tb->size;
+	}
+
+	k_spin_unlock(&tb->lock, key);
+
+	/* Don't signal semaphore - not ISR-safe.
+	 * TX thread polls periodically, so data will be picked up. */
+
+	return to_write;
+}
+
+/**
  * @brief Get data from TX buffer (thread-safe)
  *
  * @details Copies data from buffer to output.

@@ -47,11 +47,14 @@ static void tx_thread_entry(void *p1, void *p2, void *p3)
 	printk("TX thread started\n");
 
 	while (true) {
-		/* Wait for data to be available (INT32_MAX = forever) */
-		int ret = tx_buffer_wait_data(g_tx_ctx->tx_buf, INT32_MAX);
+		/* Check for data availability with short timeout (10ms) */
+		/* This allows TX thread to poll for data from ISR context */
+		int ret = tx_buffer_wait_data(g_tx_ctx->tx_buf, 10);
 		if (ret != 0) {
-			/* Timeout or error - should not happen with INT32_MAX */
-			continue;
+			/* Timeout - check if data available anyway (for ISR-sent data) */
+			if (tx_buffer_available(g_tx_ctx->tx_buf) == 0) {
+				continue;
+			}
 		}
 
 		/* Drain available data */

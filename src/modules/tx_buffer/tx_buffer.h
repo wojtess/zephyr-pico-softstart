@@ -73,6 +73,19 @@ int tx_buffer_init(struct tx_buffer *tb, uint8_t *data, size_t size);
 int tx_buffer_put(struct tx_buffer *tb, const uint8_t *data, size_t len);
 
 /**
+ * @brief Put data into TX buffer (ISR-safe version)
+ *
+ * @details ISR-safe variant that doesn't use semaphore signaling.
+ *          TX thread polls periodically, so data will be picked up.
+ *
+ * @param tb TX buffer context
+ * @param data Data to write
+ * @param len Length of data
+ * @return Number of bytes written, or -ENOBUFS if buffer full
+ */
+int tx_buffer_put_isr(struct tx_buffer *tb, const uint8_t *data, size_t len);
+
+/**
  * @brief Get data from TX buffer (thread-safe)
  *
  * @details Copies data from buffer to output.
