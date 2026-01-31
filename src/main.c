@@ -46,6 +46,7 @@
 #include "modules/ringbuf/ringbuf.h"
 #include "modules/protocol/protocol.h"
 #include "modules/drivers/led_pwm.h"
+#include "modules/drivers/adc_ctrl.h"
 
 /* =========================================================================
  * CONSTANTS AND DEFINITIONS
@@ -63,9 +64,6 @@
 /** @brief ADC device node from device tree */
 #define ADC_NODE DT_NODELABEL(adc)
 
-/** @brief ADC channel for GPIO26 (ADC0) */
-#define ADC_CHANNEL_0 0
-
 /* -------------------------------------------------------------------------
  * Buffer Sizes
  * ------------------------------------------------------------------------- */
@@ -82,14 +80,14 @@ static const struct device *uart_dev;
 /** @brief Cached PWM device pointer */
 static const struct device *pwm_dev;
 
-/** @brief Cached ADC device pointer */
-static const struct device *adc_dev;
-
 /** @brief LED GPIO DT spec (for led_pwm module) */
 static const struct gpio_dt_spec led_dt_spec = GPIO_DT_SPEC_GET(LED_NODE, gpios);
 
 /** @brief LED/PWM driver context */
 static struct led_pwm_ctx g_led_pwm;
+
+/** @brief ADC driver context */
+static struct adc_ctrl_ctx g_adc;
 
 /* =========================================================================
  * FUNCTION PROTOTYPES
@@ -107,9 +105,6 @@ static struct proto_ctx g_proto;
 /* =========================================================================
  * FUNCTION PROTOTYPES
  * ========================================================================= */
-
-/* Forward declarations for callbacks */
-static int read_adc_channel0(void);
 
 /**
  * @brief Send response byte via UART (callback for protocol module)
@@ -171,58 +166,9 @@ static int pwm_set_cb(uint8_t duty)
  */
 static int adc_read_cb(void)
 {
-	return read_adc_channel0();
+	return adc_ctrl_read_channel0(&g_adc);
 }
 
-/* =========================================================================
- * ADC READ FUNCTION
- * ========================================================================= */
-
-/**
- * @brief Read ADC value from GPIO26 (ADC channel 0)
- *
- * @details Reads 12-bit ADC value (0-4095) from ADC channel 0.
- *          RP2040 ADC: 0V = 0, 3.3V = 4095
- *
- * @return ADC value (0-4095), or negative on error
- */
-static int read_adc_channel0(void)
-{
-	int ret;
-	uint16_t adc_value = 0;
-	int16_t sample_buffer;
-
-	/* Verify ADC device is ready */
-	if (!device_is_ready(adc_dev)) {
-		printk("ERROR: ADC device not ready\n");
-		return -1;
-	}
-
-	/* Setup ADC sequence for single channel */
-	struct adc_sequence sequence = {
-		.channels = BIT(ADC_CHANNEL_0),
-		.buffer = &sample_buffer,
-		.buffer_size = sizeof(sample_buffer),
-		.resolution = 12,  /* 12-bit resolution (0-4095) */
-	};
-
-	/* Read ADC */
-	ret = adc_read(adc_dev, &sequence);
-	if (ret != 0) {
-		return ret;
-	}
-
-	adc_value = sample_buffer;
-	return adc_value;
-}
-
-/**
- * @brief Send ADC reading as response
- *
- * @details Sends [CMD][ADC_H][ADC_L][CRC8] response
- *
- * @param adc_value 12-bit ADC value (0-4095)
- */
 /* =========================================================================
  * RING BUFFER FUNCTIONS (ISR-safe)
  * ========================================================================= */
@@ -311,7 +257,7 @@ int main(void)
 	/* Get device pointers */
 	uart_dev = DEVICE_DT_GET(UART_NODE);
 	pwm_dev = DEVICE_DT_GET(PWM_DEV_NODE);
-	adc_dev = DEVICE_DT_GET(ADC_NODE);
+	const struct device *adc_dev = DEVICE_DT_GET(ADC_NODE);
 
 	/* Verify UART is ready */
 	if (!device_is_ready(uart_dev)) {
@@ -330,7 +276,6 @@ int main(void)
 		printk("ERROR: ADC device not ready\n");
 		return 0;
 	}
-	printk("ADC initialized on GPIO26 (ADC0)\n");
 
 	/* Initialize LED/PWM driver */
 	if (led_pwm_init(&g_led_pwm, pwm_dev, &led_dt_spec) != 0) {
@@ -338,6 +283,13 @@ int main(void)
 		return 0;
 	}
 	printk("LED/PWM initialized: LED OFF (PWM 0%%)\n");
+
+	/* Initialize ADC driver */
+	if (adc_ctrl_init(&g_adc, adc_dev) != 0) {
+		printk("ERROR: Failed to initialize ADC driver\n");
+		return 0;
+	}
+	printk("ADC initialized on GPIO26 (ADC0)\n");
 
 	/* Initialize RX ring buffer */
 	if (ringbuf_init(&g_rx_buf, rx_buf_data, RX_BUF_SIZE) != 0) {

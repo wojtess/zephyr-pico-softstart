@@ -9,4 +9,5 @@ target_sources(app PRIVATE
     src/modules/ringbuf/ringbuf.c
     src/modules/protocol/protocol.c
     src/modules/drivers/led_pwm.c
+    src/modules/drivers/adc_ctrl.c
 )
