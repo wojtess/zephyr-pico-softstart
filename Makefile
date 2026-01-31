@@ -11,7 +11,7 @@ PYTHON     := $(VENV_DIR)/bin/python3
 
 UF2        := $(BUILD_DIR)/zephyr/zephyr.uf2
 
-.PHONY: deps build flash clean distclean docs doxygen
+.PHONY: deps build flash clean distclean deepclean docs doxygen
 
 # ---------------- deps (runs once; file-stamped) ----------------
 deps: $(WS_DIR)
@@ -20,6 +20,7 @@ $(VENV_DIR):
 	python3 -m venv "$(VENV_DIR)";
 	$(PIP) install -U pip
 	$(PIP) install -U west
+	$(PIP) install -r scripts/requirements.txt
 
 
 $(WS_DIR): | $(VENV_DIR) 
@@ -44,6 +45,8 @@ flash: deps
 # ---------------- housekeeping ----------------
 clean:
 	rm -rf "$(BUILD_DIR)"
+
+distclean deepclean: clean
 	rm -rf $(WS_DIR)
 	rm -rf $(VENV_DIR)
 
