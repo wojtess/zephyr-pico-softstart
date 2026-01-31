@@ -210,7 +210,7 @@ def create_main_window(app: LEDControllerApp) -> None:
             no_box_select=True,
         ):
             # Create x and y axes
-            x_axis = dpg.add_plot_axis(dpg.mvXAxis, tag="adc_plot_x_axis", label="Time")
+            x_axis = dpg.add_plot_axis(dpg.mvXAxis, tag="adc_plot_x_axis", label="Time (s ago)")
             y_axis = dpg.add_plot_axis(dpg.mvYAxis, tag="adc_plot_y_axis", label="Value")
 
             # Add two series: raw value (0-4095) and voltage (0-3.3V) - parent must be y_axis
@@ -228,6 +228,9 @@ def create_main_window(app: LEDControllerApp) -> None:
                 label="Voltage (V)",
                 parent=y_axis,
             )
+
+            # Add legend to allow toggling series on/off
+            dpg.add_plot_legend()
 
         # ADC Streaming section
         dpg.add_spacer(height=15)

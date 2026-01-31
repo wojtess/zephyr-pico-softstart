@@ -14,6 +14,7 @@ import queue
 import threading
 import logging
 from typing import List, Optional
+from collections import deque
 
 try:
     import serial
@@ -65,11 +66,11 @@ class LEDControllerApp:
         self._last_health_check: float = 0.0
         self._health_check_interval: float = 1.0  # seconds
 
-        # ADC data history (thread-safe with lock)
-        self._adc_time_history: List[float] = []
-        self._adc_raw_history: List[int] = []
-        self._adc_voltage_history: List[float] = []
+        # ADC data history - using deque for circular buffer (scrolling plot)
         self._adc_max_points: int = 100
+        self._adc_time_history = deque(maxlen=self._adc_max_points)
+        self._adc_raw_history = deque(maxlen=self._adc_max_points)
+        self._adc_voltage_history = deque(maxlen=self._adc_max_points)
 
         # ADC Streaming state
         self._is_streaming: bool = False
@@ -893,27 +894,22 @@ class LEDControllerApp:
 
     def add_adc_data(self, raw_value: int, voltage: float) -> None:
         """Add ADC reading to history (thread-safe)."""
-        import time
         with self._lock:
             current_time = time.time()
             self._adc_time_history.append(current_time)
             self._adc_raw_history.append(raw_value)
             self._adc_voltage_history.append(voltage)
-
-            # Limit to max points
-            if len(self._adc_time_history) > self._adc_max_points:
-                self._adc_time_history = self._adc_time_history[-self._adc_max_points:]
-                self._adc_raw_history = self._adc_raw_history[-self._adc_max_points:]
-                self._adc_voltage_history = self._adc_voltage_history[-self._adc_max_points:]
+            # deque with maxlen automatically handles circular buffer
 
     def get_adc_history(self) -> tuple:
-        """Get ADC history data with sequential indices for x-axis."""
+        """Get ADC history data with relative time from now for x-axis."""
         with self._lock:
             if not self._adc_time_history:
                 return [], [], []
 
-            # Use sequential indices for x-axis (0, 1, 2, 3, ...)
-            x_axis = list(range(len(self._adc_time_history)))
+            # Calculate relative time from now (seconds ago)
+            now = time.time()
+            x_axis = [(t - now) for t in self._adc_time_history]
             return x_axis, list(self._adc_raw_history), list(self._adc_voltage_history)
 
     def get_pending_count(self) -> int:
