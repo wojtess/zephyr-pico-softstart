@@ -106,4 +106,5 @@ TAGS = {
     "p_series_setpoint": "p_series_setpoint",
     "p_series_measured": "p_series_measured",
     "p_series_pwm": "p_series_pwm",
+    "p_series_error": "p_series_error",
 }

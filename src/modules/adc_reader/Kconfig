@@ -1,0 +1,14 @@
+# ADC reader module configuration
+
+config ADC_READER
+	bool "Enable ADC reader module"
+	default y
+	help
+	Single-source ADC reader for P-controller and streaming.
+	Reads ADC periodically and provides shared value to consumers.
+
+	Benefits:
+	- No race condition on ADC peripheral
+	- No duplicated ADC reads
+	- Consistent ADC values across all consumers
+	- Reduced CPU overhead

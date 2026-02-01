@@ -293,7 +293,7 @@ def create_main_window(app: LEDControllerApp) -> None:
                 # Right Y axis (PWM 0-100%)
                 y_axis_pwm = dpg.add_plot_axis(dpg.mvYAxis2, tag="p_stream_y_pwm", label="PWM (%)")
 
-                # Three series for P-stream
+                # Four series for P-stream
                 dpg.add_line_series(
                     [], [],
                     tag=TAGS["p_series_setpoint"],
@@ -311,6 +311,12 @@ def create_main_window(app: LEDControllerApp) -> None:
                     tag=TAGS["p_series_pwm"],
                     label="PWM (%)",
                     parent=y_axis_pwm,
+                )
+                dpg.add_line_series(
+                    [], [],
+                    tag=TAGS["p_series_error"],
+                    label="Error",
+                    parent=y_axis_adc,
                 )
 
                 dpg.add_plot_legend()

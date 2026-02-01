@@ -14,6 +14,9 @@
 #include <zephyr/kernel.h>
 #include <stdint.h>
 
+/* Forward declaration */
+struct adc_reader_ctx;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -78,11 +81,11 @@ struct p_ctrl_ctx {
     /** @brief Callback to set PWM duty cycle */
     void (*on_pwm_set)(uint8_t duty);
 
-    /** @brief Callback to read ADC value */
-    uint16_t (*on_adc_read)(void);
-
     /** @brief Callback to send streaming data */
     void (*on_stream_data)(uint16_t setpoint, uint16_t measured, uint8_t pwm);
+
+    /** @brief ADC reader reference (shared ADC source) */
+    struct adc_reader_ctx *adc_reader;
 
     /** @brief Initialization flag */
     bool initialized;
@@ -129,17 +132,23 @@ void p_ctrl_set_gain(struct p_ctrl_ctx *ctx, uint16_t gain);
 void p_ctrl_set_feed_forward(struct p_ctrl_ctx *ctx, uint8_t ff);
 
 /**
- * @brief Register callbacks for PWM, ADC, and streaming
+ * @brief Register callbacks for PWM and streaming
  *
  * @param ctx Pointer to P-controller context
  * @param pwm_set Callback to set PWM duty cycle
- * @param adc_read Callback to read ADC value
  * @param stream_data Callback to send streaming data
  */
 void p_ctrl_set_callbacks(struct p_ctrl_ctx *ctx,
                          void (*pwm_set)(uint8_t),
-                         uint16_t (*adc_read)(void),
                          void (*stream_data)(uint16_t, uint16_t, uint8_t));
+
+/**
+ * @brief Set ADC reader reference
+ *
+ * @param ctx Pointer to P-controller context
+ * @param adc_reader Pointer to ADC reader context
+ */
+void p_ctrl_set_adc_reader(struct p_ctrl_ctx *ctx, struct adc_reader_ctx *adc_reader);
 
 /**
  * @brief Start streaming control data

@@ -100,6 +100,7 @@ def main() -> int:
                         x_axis, raw_series, volt_series = app.get_adc_history()
                         setpoint_series = list(app._setpoint_history)
                         pwm_series = list(app._pwm_history)
+                        error_series = list(app._error_history)
 
                         # Update P-stream plot
                         if dpg.does_item_exist(TAGS["p_stream_plot"]):
@@ -109,6 +110,8 @@ def main() -> int:
                                 dpg.set_value(TAGS["p_series_measured"], [x_axis, raw_series])
                             if dpg.does_item_exist(TAGS["p_series_pwm"]):
                                 dpg.set_value(TAGS["p_series_pwm"], [x_axis, pwm_series])
+                            if dpg.does_item_exist(TAGS["p_series_error"]):
+                                dpg.set_value(TAGS["p_series_error"], [x_axis, error_series])
 
                         # Update PWM output display for P-controller
                         if pwm_series and dpg.does_item_exist(TAGS["p_pwm_output"]):
