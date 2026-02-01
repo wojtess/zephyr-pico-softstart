@@ -15,4 +15,5 @@ target_sources(app PRIVATE
     src/modules/threads/rx_thread.c
     src/modules/adc_stream/adc_stream.c
     src/modules/p_controller/p_controller.c
+    src/modules/adc_reader/adc_reader.c
 )

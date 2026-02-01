@@ -8,6 +8,7 @@
  */
 
 #include "p_controller.h"
+#include "../adc_reader/adc_reader.h"
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util_macro.h>
 
@@ -38,8 +39,17 @@ static void p_ctrl_work_handler(struct k_work *work)
 
     if (mode == P_CTRL_MODE_AUTO) {
         /* AUTO mode: Calculate P-control */
-        if (ctx->on_adc_read != NULL) {
-            measured = ctx->on_adc_read();
+        if (ctx->adc_reader != NULL && adc_reader_is_active(ctx->adc_reader)) {
+            measured = adc_reader_get_last(ctx->adc_reader);
+
+            /* Handle first read (value = 0, no valid data yet) */
+            if (measured == 0 && !adc_reader_has_new_data(ctx->adc_reader)) {
+                /* No valid ADC data yet - use feed forward only */
+                LOG_DBG("No valid ADC data yet, using feed-forward only");
+                pwm_output = feed_forward;
+                goto set_pwm;
+            }
+
             ctx->last_measured = measured;
 
             /* Calculate error and correction
@@ -66,7 +76,7 @@ static void p_ctrl_work_handler(struct k_work *work)
 
             pwm_output = (uint8_t)pwm_calc;
         } else {
-            LOG_WRN("ADC callback not set, using feed-forward only");
+            LOG_WRN("ADC reader not set or not active, using feed-forward only");
             pwm_output = feed_forward;
         }
     } else {
@@ -74,6 +84,7 @@ static void p_ctrl_work_handler(struct k_work *work)
         return;
     }
 
+set_pwm:
     /* Update stored PWM value */
     ctx->last_pwm = pwm_output;
 
@@ -214,7 +225,6 @@ void p_ctrl_set_feed_forward(struct p_ctrl_ctx *ctx, uint8_t ff)
 
 void p_ctrl_set_callbacks(struct p_ctrl_ctx *ctx,
                          void (*pwm_set)(uint8_t),
-                         uint16_t (*adc_read)(void),
                          void (*stream_data)(uint16_t, uint16_t, uint8_t))
 {
     if (ctx == NULL || !ctx->initialized) {
@@ -222,8 +232,16 @@ void p_ctrl_set_callbacks(struct p_ctrl_ctx *ctx,
     }
 
     ctx->on_pwm_set = pwm_set;
-    ctx->on_adc_read = adc_read;
     ctx->on_stream_data = stream_data;
+}
+
+void p_ctrl_set_adc_reader(struct p_ctrl_ctx *ctx, struct adc_reader_ctx *adc_reader)
+{
+    if (ctx == NULL || !ctx->initialized) {
+        return;
+    }
+
+    ctx->adc_reader = adc_reader;
 }
 
 int p_ctrl_start_stream(struct p_ctrl_ctx *ctx, uint32_t rate_hz)

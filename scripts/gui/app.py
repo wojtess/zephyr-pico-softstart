@@ -99,6 +99,7 @@ class LEDControllerApp:
         # History for P-controller plot (deques)
         self._setpoint_history = deque(maxlen=self._adc_max_points)
         self._pwm_history = deque(maxlen=self._adc_max_points)
+        self._error_history = deque(maxlen=self._adc_max_points)
 
         # Command queue (visible in GUI) - pending tasks waiting to be processed
         self._pending_tasks: List[SerialTask] = []
@@ -249,6 +250,7 @@ class LEDControllerApp:
                         setpoint = (p_sp_h << 8) | p_sp_l
                         measured = (p_meas_h << 8) | p_meas_l
                         pwm = p_pwm
+                        error = setpoint - measured  # Calculate error
 
                         # Add to history
                         with self._lock:
@@ -257,6 +259,7 @@ class LEDControllerApp:
                             self._adc_voltage_history.append((measured / 4095.0) * 3.3)
                             self._setpoint_history.append(setpoint)
                             self._pwm_history.append(pwm)
+                            self._error_history.append(error)
 
                             # Trim to max points
                             if len(self._adc_time_history) > self._adc_max_points:

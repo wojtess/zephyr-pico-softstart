@@ -5,12 +5,12 @@
 
 #include "adc_stream.h"
 #include "../drivers/led_pwm.h"
-#include "../drivers/adc_ctrl.h"
+#include "../adc_reader/adc_reader.h"
 #include "../tx_buffer/tx_buffer.h"
 #include "../protocol/protocol.h"
 
 /* Debug flag - ustaw na 1 aby włączyć pakiety debug */
-#define ADC_STREAM_DEBUG_ENABLED 1
+#define ADC_STREAM_DEBUG_ENABLED 0
 
 /* Debug codes */
 #define DEBUG_TIMER_START  1
@@ -23,6 +23,7 @@
  * WORK QUEUE (dla ADC read z thread context)
  * ========================================================================= */
 
+#if ADC_STREAM_DEBUG_ENABLED
 /**
  * @brief Send debug packet to TX buffer
  */
@@ -31,27 +32,36 @@ static void send_debug(struct adc_stream_ctx *ctx, uint8_t code)
 	uint8_t debug_pkt[2] = {0xFD, code};  /* DEBUG marker + code */
 	tx_buffer_put_isr(ctx->tx_buf, debug_pkt, sizeof(debug_pkt));
 }
+#endif
 
 /**
- * @brief Work item dla ADC read (tylko work może wywołać adc_read)
+ * @brief Work item for sending ADC stream data
+ *
+ * @details Reads the latest ADC value from shared ADC reader and
+ *          sends it via TX buffer. Runs in thread context.
  */
 static void adc_stream_work_handler(struct k_work *work)
 {
 	struct adc_stream_ctx *ctx =
 		CONTAINER_OF(work, struct adc_stream_ctx, work);
 
-	int adc_value;
+	uint16_t adc_value;
 	uint8_t response[4];
 	uint8_t crc;
 
+#if ADC_STREAM_DEBUG_ENABLED
 	/* Debug: work handler entered */
 	send_debug(ctx, DEBUG_ADC_READ);
+#endif
 
-	/* Read ADC (teraz w thread context, nie ISR) */
-	adc_value = adc_ctrl_read_channel0(ctx->adc);
-	if (adc_value < 0) {
-		/* ADC error */
+	/* Get latest ADC value from shared reader */
+	if (ctx->adc_reader != NULL && adc_reader_is_active(ctx->adc_reader)) {
+		adc_value = adc_reader_get_last(ctx->adc_reader);
+	} else {
+		/* No ADC reader configured or not active - skip this cycle */
+#if ADC_STREAM_DEBUG_ENABLED
 		send_debug(ctx, DEBUG_ADC_ERROR);
+#endif
 		return;
 	}
 
@@ -68,7 +78,9 @@ static void adc_stream_work_handler(struct k_work *work)
 
 	/* Send to TX buffer (ISR-safe version) */
 	tx_buffer_put_isr(ctx->tx_buf, response, sizeof(response));
+#if ADC_STREAM_DEBUG_ENABLED
 	send_debug(ctx, DEBUG_TX_PUT);
+#endif
 }
 
 /* =========================================================================
@@ -88,8 +100,10 @@ static void adc_stream_timer_callback(struct k_timer *timer)
 	struct adc_stream_ctx *ctx =
 		CONTAINER_OF(timer, struct adc_stream_ctx, timer);
 
+#if ADC_STREAM_DEBUG_ENABLED
 	/* Debug: timer callback entered */
 	send_debug(ctx, DEBUG_TIMER_CB);
+#endif
 
 	/* Increment debug counter */
 	ctx->debug_count++;
@@ -108,21 +122,19 @@ static void adc_stream_timer_callback(struct k_timer *timer)
  * @details Initializes timer and sets up context.
  *
  * @param ctx ADC stream context to initialize
- * @param adc ADC driver context
  * @param tx_buf TX buffer for sending ADC values
  * @param led LED/PWM driver context (for debug signaling)
  * @return 0 on success, negative errno on failure
  */
 int adc_stream_init(struct adc_stream_ctx *ctx,
-		    struct adc_ctrl_ctx *adc,
 		    struct tx_buffer *tx_buf,
 		    struct led_pwm_ctx *led)
 {
-	if (!ctx || !adc || !tx_buf) {
+	if (!ctx || !tx_buf) {
 		return -EINVAL;
 	}
 
-	ctx->adc = adc;
+	ctx->adc_reader = NULL;
 	ctx->tx_buf = tx_buf;
 	ctx->led = led;
 	ctx->active = false;
@@ -137,6 +149,23 @@ int adc_stream_init(struct adc_stream_ctx *ctx,
 	k_work_init(&ctx->work, adc_stream_work_handler);
 
 	return 0;
+}
+
+/**
+ * @brief Set ADC reader for streaming module
+ *
+ * @details Sets the shared ADC reader context.
+ *          Must be called before starting streaming.
+ *
+ * @param ctx ADC stream context
+ * @param adc_reader ADC reader context (shared source)
+ */
+void adc_stream_set_adc_reader(struct adc_stream_ctx *ctx,
+			       struct adc_reader_ctx *adc_reader)
+{
+	if (ctx) {
+		ctx->adc_reader = adc_reader;
+	}
 }
 
 /**
@@ -171,8 +200,10 @@ int adc_stream_start(struct adc_stream_ctx *ctx, uint32_t interval_ms)
 	/* Start periodic timer */
 	k_timer_start(&ctx->timer, K_MSEC(interval_ms), K_MSEC(interval_ms));
 
+#if ADC_STREAM_DEBUG_ENABLED
 	/* Debug: timer started (wysyłamy PO timer start, żeby ACK przyszło pierwsze) */
 	send_debug(ctx, DEBUG_TIMER_START);
+#endif
 
 	return 0;
 }

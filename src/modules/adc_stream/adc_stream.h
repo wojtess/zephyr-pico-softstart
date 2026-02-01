@@ -35,24 +35,27 @@
  * CONTEXT STRUCTURE
  * ========================================================================= */
 
-/* Forward declaration */
+/* Forward declarations */
 struct led_pwm_ctx;
+
+/* Forward declaration for ADC reader (from ../adc_reader/adc_reader.h) */
+struct adc_reader_ctx;
 
 /**
  * @brief ADC stream context
  *
- * @details Holds timer, work item, state, and ADC/TX buffer references.
+ * @details Holds timer, work item, state, and ADC reader/TX buffer references.
  *          Must be initialized with adc_stream_init() before use.
  */
 struct adc_stream_ctx {
 	/** Timer for periodic sampling */
 	struct k_timer timer;
 
-	/** Work item for ADC read (must be in thread context) */
+	/** Work item for sending ADC data (must be in thread context) */
 	struct k_work work;
 
-	/** ADC driver context */
-	struct adc_ctrl_ctx *adc;
+	/** ADC reader context (shared ADC source) */
+	struct adc_reader_ctx *adc_reader;
 
 	/** TX buffer for sending ADC values */
 	struct tx_buffer *tx_buf;
@@ -86,14 +89,25 @@ struct adc_stream_ctx {
  * @details Initializes timer and sets up context.
  *
  * @param ctx ADC stream context to initialize
- * @param adc ADC driver context
  * @param tx_buf TX buffer for sending ADC values
+ * @param led LED/PWM driver context (for debug signaling)
  * @return 0 on success, negative errno on failure
  */
 int adc_stream_init(struct adc_stream_ctx *ctx,
-		    struct adc_ctrl_ctx *adc,
 		    struct tx_buffer *tx_buf,
 		    struct led_pwm_ctx *led);
+
+/**
+ * @brief Set ADC reader for streaming module
+ *
+ * @details Sets the shared ADC reader context.
+ *          Must be called before starting streaming.
+ *
+ * @param ctx ADC stream context
+ * @param adc_reader ADC reader context (shared source)
+ */
+void adc_stream_set_adc_reader(struct adc_stream_ctx *ctx,
+			       struct adc_reader_ctx *adc_reader);
 
 /**
  * @brief Start ADC streaming

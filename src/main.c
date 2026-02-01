@@ -51,6 +51,7 @@
 #include "modules/protocol/protocol.h"
 #include "modules/drivers/led_pwm.h"
 #include "modules/drivers/adc_ctrl.h"
+#include "modules/adc_reader/adc_reader.h"
 #include "modules/tx_buffer/tx_buffer.h"
 #include "modules/threads/tx_thread.h"
 #include "modules/threads/rx_thread.h"
@@ -100,6 +101,9 @@ static struct led_pwm_ctx g_led_pwm;
 
 /** @brief ADC driver context */
 static struct adc_ctrl_ctx g_adc;
+
+/** @brief ADC reader context (shared ADC source) */
+static struct adc_reader_ctx g_adc_reader;
 
 /** @brief P-controller context */
 static struct p_ctrl_ctx g_p_ctrl;
@@ -196,7 +200,8 @@ static int pwm_set_cb(uint8_t duty)
  */
 static int adc_read_cb(void)
 {
-	return adc_ctrl_read_channel0(&g_adc);
+	/* Return the latest value from shared ADC reader */
+	return (int)adc_reader_get_last(&g_adc_reader);
 }
 
 /**
@@ -232,17 +237,6 @@ static int stream_stop_cb(void)
 static void led_pwm_set_duty_wrapper(uint8_t duty)
 {
 	led_pwm_set_duty(&g_led_pwm, duty);
-}
-
-/**
- * @brief Wrapper for ADC read
- *
- * @return ADC value (0-4095)
- */
-static uint16_t adc_ctrl_read_channel0_wrapper(void)
-{
-	int val = adc_ctrl_read_channel0(&g_adc);
-	return (val > 0) ? (uint16_t)val : 0;
 }
 
 /**
@@ -417,11 +411,33 @@ int main(void)
 	}
 	printk("ADC initialized on GPIO26 (ADC0)\n");
 
+	/* Initialize ADC reader (shared ADC source at 1kHz = 1ms interval) */
+	if (adc_reader_init(&g_adc_reader, adc_dev, ADC_READER_DEFAULT_INTERVAL_MS) != 0) {
+		printk("ERROR: Failed to initialize ADC reader\n");
+		return 0;
+	}
+
+	/* Start ADC reader */
+	if (adc_reader_start(&g_adc_reader) != 0) {
+		printk("ERROR: Failed to start ADC reader\n");
+		return 0;
+	}
+
+	/* Verify ADC reader is actually running */
+	if (!adc_reader_is_active(&g_adc_reader)) {
+		printk("ERROR: ADC reader failed to start (timer not running)\n");
+		return 0;
+	}
+	printk("ADC reader started (1kHz sampling)\n");
+
 	/* Initialize ADC stream module */
-	if (adc_stream_init(&g_adc_stream, &g_adc, &g_tx_buf, &g_led_pwm) != 0) {
+	if (adc_stream_init(&g_adc_stream, &g_tx_buf, &g_led_pwm) != 0) {
 		printk("ERROR: Failed to initialize ADC stream module\n");
 		return 0;
 	}
+
+	/* Set ADC reader for streaming module */
+	adc_stream_set_adc_reader(&g_adc_stream, &g_adc_reader);
 
 	/* Initialize P-controller */
 	if (p_ctrl_init(&g_p_ctrl) != 0) {
@@ -430,11 +446,13 @@ int main(void)
 	}
 	printk("P-controller initialized (MANUAL mode)\n");
 
-	/* Register P-controller callbacks */
+	/* Register P-controller callbacks (PWM and stream data only) */
 	p_ctrl_set_callbacks(&g_p_ctrl,
 			     led_pwm_set_duty_wrapper,
-			     adc_ctrl_read_channel0_wrapper,
 			     proto_send_p_stream_data);
+
+	/* Set ADC reader for P-controller */
+	p_ctrl_set_adc_reader(&g_p_ctrl, &g_adc_reader);
 
 	/* Initialize RX ring buffer */
 	if (ringbuf_init(&g_rx_buf, rx_buf_data, RX_BUF_SIZE) != 0) {
