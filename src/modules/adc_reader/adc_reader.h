@@ -22,14 +22,20 @@ extern "C" {
  * CONSTANTS
  * ========================================================================= */
 
-/** @brief Default ADC read interval (1ms = 1kHz for P-controller) */
-#define ADC_READER_DEFAULT_INTERVAL_MS  1
+/** @brief Default ADC read interval (50µs = 20kHz) */
+#define ADC_READER_DEFAULT_INTERVAL_US  50
 
-/** @brief Maximum ADC read interval (ms) */
-#define ADC_READER_MAX_INTERVAL_MS     1000
+/** @brief Maximum ADC read interval (µs) - 1 second */
+#define ADC_READER_MAX_INTERVAL_US     1000000
 
-/** @brief Minimum ADC read interval (ms) */
-#define ADC_READER_MIN_INTERVAL_MS     1
+/** @brief Minimum ADC read interval (µs) - 10kHz for safety */
+#define ADC_READER_MIN_INTERVAL_US     10
+
+/** @brief Moving average filter window size (power of 2 for efficiency) */
+#define ADC_FILTER_WINDOW_SIZE  8
+
+/** @brief Moving average filter mask (for efficient modulo) */
+#define ADC_FILTER_MASK  (ADC_FILTER_WINDOW_SIZE - 1)
 
 /* =========================================================================
  * CONTEXT STRUCTURE
@@ -51,14 +57,14 @@ struct adc_reader_ctx {
 	/** ADC device pointer */
 	const struct device *adc_dev;
 
-	/** Shared ADC value (atomic access) */
+	/** Shared ADC value (atomic access) - FILTERED value */
 	atomic_t last_adc_value;
 
 	/** Flag indicating new data is available */
 	volatile bool new_data_ready;
 
-	/** ADC read interval in milliseconds */
-	uint32_t interval_ms;
+	/** ADC read interval in microseconds */
+	uint32_t interval_us;
 
 	/** Active flag */
 	volatile bool active;
@@ -66,8 +72,17 @@ struct adc_reader_ctx {
 	/** Initialization flag */
 	bool initialized;
 
-	/** Reserved for future use */
-	uint8_t _reserved[4];
+	/** Moving average filter buffer (ring buffer) */
+	uint16_t filter_buffer[ADC_FILTER_WINDOW_SIZE];
+
+	/** Current index in filter buffer */
+	uint8_t filter_index;
+
+	/** Sum of values in filter buffer (for efficient average) */
+	uint32_t filter_sum;
+
+	/** Number of samples collected (for warm-up period) */
+	uint8_t filter_count;
 };
 
 /* =========================================================================
@@ -82,12 +97,12 @@ struct adc_reader_ctx {
  *
  * @param ctx ADC reader context to initialize
  * @param adc_dev ADC device pointer
- * @param interval_ms ADC read interval in milliseconds (1-1000)
+ * @param interval_us ADC read interval in microseconds (10-1000000)
  * @return 0 on success, negative errno on failure
  */
 int adc_reader_init(struct adc_reader_ctx *ctx,
 		    const struct device *adc_dev,
-		    uint32_t interval_ms);
+		    uint32_t interval_us);
 
 /**
  * @brief Start periodic ADC reading
@@ -153,7 +168,7 @@ bool adc_reader_is_active(const struct adc_reader_ctx *ctx);
  * @brief Get current read interval
  *
  * @param ctx ADC reader context
- * @return Interval in milliseconds
+ * @return Interval in microseconds
  */
 uint32_t adc_reader_get_interval(const struct adc_reader_ctx *ctx);
 
@@ -164,10 +179,10 @@ uint32_t adc_reader_get_interval(const struct adc_reader_ctx *ctx);
  *          it will be restarted with the new interval.
  *
  * @param ctx ADC reader context
- * @param interval_ms New interval in milliseconds (1-1000)
+ * @param interval_us New interval in microseconds (10-1000000)
  * @return 0 on success, negative errno on failure
  */
-int adc_reader_set_interval(struct adc_reader_ctx *ctx, uint32_t interval_ms);
+int adc_reader_set_interval(struct adc_reader_ctx *ctx, uint32_t interval_us);
 
 #ifdef __cplusplus
 }

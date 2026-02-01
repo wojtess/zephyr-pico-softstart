@@ -411,8 +411,8 @@ int main(void)
 	}
 	printk("ADC initialized on GPIO26 (ADC0)\n");
 
-	/* Initialize ADC reader (shared ADC source at 1kHz = 1ms interval) */
-	if (adc_reader_init(&g_adc_reader, adc_dev, ADC_READER_DEFAULT_INTERVAL_MS) != 0) {
+	/* Initialize ADC reader (shared ADC source at 20kHz = 50us interval) */
+	if (adc_reader_init(&g_adc_reader, adc_dev, ADC_READER_DEFAULT_INTERVAL_US) != 0) {
 		printk("ERROR: Failed to initialize ADC reader\n");
 		return 0;
 	}
@@ -428,7 +428,7 @@ int main(void)
 		printk("ERROR: ADC reader failed to start (timer not running)\n");
 		return 0;
 	}
-	printk("ADC reader started (1kHz sampling)\n");
+	printk("ADC reader started (20kHz sampling with moving average filter)\n");
 
 	/* Initialize ADC stream module */
 	if (adc_stream_init(&g_adc_stream, &g_tx_buf, &g_led_pwm) != 0) {

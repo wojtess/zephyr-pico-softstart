@@ -97,7 +97,7 @@ def main() -> int:
 
                     # Update P-Stream plot (when P-streaming is active)
                     if app.is_p_streaming():
-                        x_axis, raw_series, volt_series = app.get_adc_history()
+                        x_axis, raw_series, volt_series = app.get_p_stream_history()
                         setpoint_series = list(app._setpoint_history)
                         pwm_series = list(app._pwm_history)
                         error_series = list(app._error_history)
@@ -113,15 +113,17 @@ def main() -> int:
                             if dpg.does_item_exist(TAGS["p_series_error"]):
                                 dpg.set_value(TAGS["p_series_error"], [x_axis, error_series])
 
-                        # Update PWM output display for P-controller
-                        if pwm_series and dpg.does_item_exist(TAGS["p_pwm_output"]):
-                            dpg.set_value(TAGS["p_pwm_output"], f"{pwm_series[-1]}%")
-
                         # Flush recording data periodically (when recording is active)
                         if app.is_p_recording():
                             count = app.flush_recorded_data()
                             if count > 0:
                                 logger.debug(f"Flushed {count} samples to recording")
+
+                    # Update PWM output display ALWAYS (independent of streaming state)
+                    # This shows the last known PWM value from any source (manual or P-stream)
+                    last_pwm = app.get_last_known_pwm()
+                    if dpg.does_item_exist(TAGS["p_pwm_output"]):
+                        dpg.set_value(TAGS["p_pwm_output"], f"{last_pwm}%")
 
                     time.sleep(0.05)  # 20 FPS for plot updates
                 except Exception:
