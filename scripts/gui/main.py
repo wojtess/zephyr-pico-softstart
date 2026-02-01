@@ -40,7 +40,6 @@ except ImportError as e:
 from gui.app import LEDControllerApp
 from gui.constants import TAGS
 from gui.widgets import create_main_window
-from gui.callbacks import on_frame_callback
 from gui.utils import find_ports_with_info, update_status
 
 
@@ -53,11 +52,11 @@ def main() -> int:
     dpg.create_context()
 
     try:
-        # Configure viewport
+        # Configure viewport (larger for controls + plots)
         dpg.create_viewport(
             title="RP2040 LED Control",
-            width=550,
-            height=600,
+            width=1400,
+            height=900,
             clear_color=[30, 30, 30, 255],
             decorated=True,
         )
@@ -130,9 +129,6 @@ def main() -> int:
                     break
 
         threading.Thread(target=plot_refresh_worker, daemon=True).start()
-
-        # Register frame callback for health checks (runs every frame)
-        dpg.set_frame_callback(-1, on_frame_callback, user_data=app)
 
         # Initial port scan
         ports = find_ports_with_info()

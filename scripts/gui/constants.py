@@ -91,11 +91,19 @@ TAGS = {
     "queue_processing": "txt_queue_processing",
     # P-Controller mode and controls
     "p_mode_radio": "radio_p_mode",
+    "p_mode_radio_p": "radio_p_mode_p",
     "p_control_group": "group_p_control",
     "p_setpoint_input": "input_p_setpoint",
+    "p_setpoint_slider": "slider_p_setpoint",
+    "p_setpoint_btn_m100": "btn_p_setpoint_m100",
+    "p_setpoint_btn_m10": "btn_p_setpoint_m10",
+    "p_setpoint_btn_p10": "btn_p_setpoint_p10",
+    "p_setpoint_btn_p100": "btn_p_setpoint_p100",
     "p_gain_slider": "slider_p_gain",
+    "p_gain_input": "input_p_gain",
     "p_gain_label": "txt_p_gain",
     "p_ff_slider": "slider_p_ff",
+    "p_ff_input": "input_p_ff",
     "p_ff_label": "txt_p_ff",
     "p_pwm_output": "txt_p_pwm",
     # P-Controller streaming
@@ -103,6 +111,9 @@ TAGS = {
     "p_stream_stop_btn": "btn_p_stream_stop",
     "p_stream_interval": "input_p_stream_interval",
     "p_stream_status": "txt_p_stream_status",
+    "p_stream_enable_chk": "chk_p_stream_enable",
+    "p_record_enable_chk": "chk_p_record_enable",
+    "adc_stream_enable_chk": "chk_adc_stream_enable",
     "p_stream_plot": "plot_p_stream",
     # Plot series for P-stream
     "p_series_setpoint": "p_series_setpoint",
@@ -127,3 +138,10 @@ TAGS = {
     "p_analysis_time_range": "input_p_analysis_time_range",
     "p_analysis_derived_metrics": "txt_p_analysis_derived_metrics"
 }
+
+# P-Controller mode values (must match radio button items)
+P_MODE_MANUAL = "M"
+P_MODE_AUTO = "P"
+
+# Tuple of valid mode strings for validation (immutable)
+P_MODE_VALUES = (P_MODE_MANUAL, P_MODE_AUTO)
