@@ -69,6 +69,7 @@ class LEDControllerApp:
         self._pwm_duty: int = 0  # 0-100%
         self._last_known_pwm: int = 0  # Last actual PWM output (from any source)
         self._is_connected: bool = False
+        self._current_port: Optional[str] = None
 
         # Worker thread
         self._task_queue: queue.Queue = queue.Queue()
@@ -1623,6 +1624,33 @@ class LEDControllerApp:
         """Get list of pending task names."""
         with self._lock:
             return [t.command.value for t in self._pending_tasks]
+
+    # ========== Setter methods for state tracking ==========
+
+    def set_port(self, port: str) -> None:
+        """Store the current port."""
+        with self._lock:
+            self._current_port = port
+
+    def set_led_state(self, state: bool) -> None:
+        """Store LED state."""
+        with self._lock:
+            self._led_state = state
+
+    def set_streaming(self, is_streaming: bool) -> None:
+        """Store ADC streaming state."""
+        with self._lock:
+            self._is_streaming = is_streaming
+
+    def set_p_streaming(self, is_streaming: bool) -> None:
+        """Store P-streaming state."""
+        with self._lock:
+            self._p_streaming = is_streaming
+
+    def set_p_recording(self, is_recording: bool) -> None:
+        """Store P-recording state."""
+        with self._lock:
+            self._p_recording = is_recording
 
     def shutdown(self) -> None:
         """Shutdown the application and worker thread."""
