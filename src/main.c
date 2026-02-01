@@ -1,9 +1,9 @@
 /**
  * @file main.c
- * @brief RP2040 PWM LED Control via UART ACM Binary Protocol
+ * @brief RP2040 PWM LED Control with P-Controller via UART ACM Binary Protocol
  *
- * @details This firmware implements a PWM-based LED control system for RP2040.
- *          Future versions will extend this to softstart current control.
+ * @details This firmware implements a PWM-based LED control system for RP2040
+ *          with P-controller for automatic current regulation.
  *
  * **Hardware Platform:**
  *   - MCU: RP2040 (Raspberry Pi Pico)
@@ -12,24 +12,28 @@
  *   - Communication: USB CDC ACM (virtual serial port)
  *
  * **Binary Protocol Specification:**
- *   - Frame Format: [CMD][VALUE][CRC8] (3 bytes)
+ *   - Frame Format: [CMD][VALUE][CRC8] (3 bytes) or [CMD][H][L][CRC8] (4 bytes)
  *   - CMD 0x01: SET LED (0=OFF, 1+=ON) - Legacy ON/OFF
  *   - CMD 0x02: SET PWM DUTY (0-100, 0%=OFF, 100%=full brightness)
  *   - CMD 0x03: READ ADC - Request ADC reading, response: [0x03][ADC_H][ADC_L][CRC8]
- *     - ADC_H: High byte of ADC value (0-3.3V maps to 0-4095, 12-bit)
- *     - ADC_L: Low byte of ADC value
+ *   - CMD 0x06: SET MODE (0=MANUAL, 1=AUTO)
+ *   - CMD 0x07: SET P SETPOINT (H/L bytes, 0-4095)
+ *   - CMD 0x08: SET P GAIN (H/L bytes, 0-1000, represents 0.0-10.0)
+ *   - CMD 0x09: START P STREAM (rate H/L in Hz)
+ *   - CMD 0x0A: STOP P STREAM
+ *   - CMD 0x0C: SET FEED FORWARD (0-100)
  *   - Response: ACK 0xFF or NACK 0xFE + error code
  *   - CRC-8: Polynomial 0x07, Initial 0x00
  *
- * **Project Roadmap:**
- *   1. LED ON/OFF control (legacy)
- *   2. PWM duty cycle control (current implementation)
- *   3. ADC analog input reading (current implementation)
- *   4. Softstart with current regulation (1% accuracy)
+ * **P-Controller Operation:**
+ *   - Mode 0 (MANUAL): PWM controlled by GUI via SET_PWM (0x02)
+ *   - Mode 1 (AUTO): P-controller calculates PWM automatically
+ *   - Formula: PWM = feed_forward + (Kp * (setpoint - measured)) / 100
+ *   - Control loop runs at 1kHz (1ms interval)
  *
  * @author Project Team
- * @version 0.3.0
- * @date 2026-01-30
+ * @version 0.4.0
+ * @date 2026-02-01
  */
 
 #include <zephyr/kernel.h>
@@ -51,6 +55,7 @@
 #include "modules/threads/tx_thread.h"
 #include "modules/threads/rx_thread.h"
 #include "modules/adc_stream/adc_stream.h"
+#include "modules/p_controller/p_controller.h"
 
 /* =========================================================================
  * CONSTANTS AND DEFINITIONS
@@ -95,6 +100,9 @@ static struct led_pwm_ctx g_led_pwm;
 
 /** @brief ADC driver context */
 static struct adc_ctrl_ctx g_adc;
+
+/** @brief P-controller context */
+static struct p_ctrl_ctx g_p_ctrl;
 
 /* =========================================================================
  * FUNCTION PROTOTYPES
@@ -213,6 +221,122 @@ static int stream_stop_cb(void)
 }
 
 /* =========================================================================
+ * P-CONTROLLER WRAPPER FUNCTIONS
+ * ========================================================================= */
+
+/**
+ * @brief Wrapper for PWM set (matches P-controller callback signature)
+ *
+ * @param duty PWM duty cycle (0-100)
+ */
+static void led_pwm_set_duty_wrapper(uint8_t duty)
+{
+	led_pwm_set_duty(&g_led_pwm, duty);
+}
+
+/**
+ * @brief Wrapper for ADC read
+ *
+ * @return ADC value (0-4095)
+ */
+static uint16_t adc_ctrl_read_channel0_wrapper(void)
+{
+	int val = adc_ctrl_read_channel0(&g_adc);
+	return (val > 0) ? (uint16_t)val : 0;
+}
+
+/**
+ * @brief Wrapper for sending P-stream data via protocol
+ *
+ * @param setpoint Target ADC value
+ * @param measured Measured ADC value
+ * @param pwm PWM output
+ */
+static void proto_send_p_stream_data(uint16_t setpoint, uint16_t measured, uint8_t pwm)
+{
+	uint8_t frame[7];
+	proto_build_p_stream_frame(frame, setpoint, measured, pwm);
+	tx_buffer_put(&g_tx_buf, frame, sizeof(frame));
+}
+
+/**
+ * @brief Set P-controller mode callback
+ *
+ * @param mode 0=MANUAL, 1=AUTO
+ */
+static void p_ctrl_set_mode_cb(uint8_t mode)
+{
+	p_ctrl_set_mode(&g_p_ctrl, mode);
+}
+
+/**
+ * @brief Set P-controller setpoint callback
+ *
+ * @param setpoint Target ADC value (0-4095)
+ */
+static void p_ctrl_set_setpoint_cb(uint16_t setpoint)
+{
+	p_ctrl_set_setpoint(&g_p_ctrl, setpoint);
+}
+
+/**
+ * @brief Set P-controller gain callback
+ *
+ * @param gain Gain value (0-1000, represents 0.0-10.0)
+ */
+static void p_ctrl_set_gain_cb(uint16_t gain)
+{
+	p_ctrl_set_gain(&g_p_ctrl, gain);
+}
+
+/**
+ * @brief Set P-controller feed-forward callback
+ *
+ * @param ff Feed-forward PWM (0-100)
+ */
+static void p_ctrl_set_feed_forward_cb(uint8_t ff)
+{
+	p_ctrl_set_feed_forward(&g_p_ctrl, ff);
+}
+
+/**
+ * @brief Start P-controller streaming callback
+ *
+ * @param rate_hz Streaming rate in Hz (max 1000)
+ * @return 0 on success, negative on failure
+ */
+static int p_ctrl_start_stream_cb(uint32_t rate_hz)
+{
+	return p_ctrl_start_stream(&g_p_ctrl, rate_hz);
+}
+
+/**
+ * @brief Stop P-controller streaming callback
+ *
+ * @return 0 on success, negative on failure
+ */
+static int p_ctrl_stop_stream_cb(void)
+{
+	return p_ctrl_stop_stream(&g_p_ctrl);
+}
+
+/**
+ * @brief Get P-controller status callback
+ *
+ * @return 0 on success (sends response via proto_send_p_stream_data)
+ */
+static int p_ctrl_get_status_cb(void)
+{
+	uint8_t frame[7];
+	uint16_t setpoint = (uint16_t)atomic_get(&g_p_ctrl.setpoint);
+	uint16_t measured = g_p_ctrl.last_measured;
+	uint8_t pwm = g_p_ctrl.last_pwm;
+	proto_build_p_stream_frame(frame, setpoint, measured, pwm);
+	tx_buffer_put(&g_tx_buf, frame, sizeof(frame));
+	return 0;
+}
+
+/* =========================================================================
  * UART INTERRUPT HANDLERS
  * ========================================================================= */
 
@@ -299,6 +423,19 @@ int main(void)
 		return 0;
 	}
 
+	/* Initialize P-controller */
+	if (p_ctrl_init(&g_p_ctrl) != 0) {
+		printk("ERROR: Failed to initialize P-controller\n");
+		return 0;
+	}
+	printk("P-controller initialized (MANUAL mode)\n");
+
+	/* Register P-controller callbacks */
+	p_ctrl_set_callbacks(&g_p_ctrl,
+			     led_pwm_set_duty_wrapper,
+			     adc_ctrl_read_channel0_wrapper,
+			     proto_send_p_stream_data);
+
 	/* Initialize RX ring buffer */
 	if (ringbuf_init(&g_rx_buf, rx_buf_data, RX_BUF_SIZE) != 0) {
 		printk("ERROR: Failed to initialize RX ring buffer\n");
@@ -332,6 +469,15 @@ int main(void)
 	g_proto.on_adc_read = adc_read_cb;
 	g_proto.on_stream_start = stream_start_cb;
 	g_proto.on_stream_stop = stream_stop_cb;
+	/* P-controller callbacks */
+	g_proto.on_set_mode = p_ctrl_set_mode_cb;
+	g_proto.on_set_p_setpoint = p_ctrl_set_setpoint_cb;
+	g_proto.on_set_p_gain = p_ctrl_set_gain_cb;
+	g_proto.on_set_feed_forward = p_ctrl_set_feed_forward_cb;
+	g_proto.on_start_p_stream = p_ctrl_start_stream_cb;
+	g_proto.on_stop_p_stream = p_ctrl_stop_stream_cb;
+	g_proto.on_get_p_status = p_ctrl_get_status_cb;
+	/* Response callbacks */
 	g_proto.send_resp = send_response_cb;
 	g_proto.send_adc_resp = send_adc_response_cb;
 
@@ -343,14 +489,21 @@ int main(void)
 	}
 
 	printk("===================================\n");
-	printk("RP2040 PWM LED + ADC Control\n");
+	printk("RP2040 PWM LED + ADC + P-Controller\n");
 	printk("LED: GPIO25 (built-in)\n");
-	printk("PWM: 1kHz frequency\n");
+	printk("PWM: 25kHz frequency\n");
 	printk("ADC: GPIO26 (12-bit, 0-3.3V)\n");
+	printk("P-Controller: 1kHz control loop\n");
 	printk("Protocol: [CMD][VALUE][CRC8]\n");
 	printk("  0x01 <val> <crc>  -> Set LED (0=OFF, 1+=ON)\n");
 	printk("  0x02 <0-100> <crc> -> Set PWM duty (0=OFF, 100=full)\n");
 	printk("  0x03 <crc>        -> Read ADC (returns [0x03][ADC_H][ADC_L][CRC])\n");
+	printk("  0x06 <mode> <crc> -> Set mode (0=MANUAL, 1=AUTO)\n");
+	printk("  0x07 <H><L><crc>  -> Set setpoint (0-4095)\n");
+	printk("  0x08 <H><L><crc>  -> Set gain (0-1000, Kp=0.0-10.0)\n");
+	printk("  0x0C <ff> <crc>   -> Set feed-forward (0-100)\n");
+	printk("  0x09 <H><L><crc>  -> Start P-stream (rate Hz)\n");
+	printk("  0x0A <crc>        -> Stop P-stream\n");
 	printk("  Response: ACK=0xFF, NACK=0xFE\n");
 	printk("===================================\n\n");
 

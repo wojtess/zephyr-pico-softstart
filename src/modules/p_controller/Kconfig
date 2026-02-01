@@ -1,0 +1,12 @@
+# P-controller module configuration options
+
+config P_CONTROLLER
+    bool "Enable P-controller module"
+    default y
+    help
+        P-controller for current regulation with manual/auto mode switching.
+        Control loop runs at 1 kHz (1ms interval) and supports:
+        - MANUAL mode: Direct PWM control
+        - AUTO mode: Automatic P-control based on ADC feedback
+
+        Formula: PWM = feed_forward + (Kp * (setpoint - measured)) / 100

@@ -103,6 +103,7 @@ def handle_disconnect_state(app: LEDControllerApp) -> None:
     with app._lock:
         app._is_streaming = False
         app._stream_running = False
+        app._p_streaming = False
 
     if dpg.does_item_exist(TAGS["connect_btn"]):
         dpg.set_item_label(TAGS["connect_btn"], "Connect")
@@ -129,6 +130,23 @@ def handle_disconnect_state(app: LEDControllerApp) -> None:
     if dpg.does_item_exist(TAGS["stream_status"]):
         dpg.set_value(TAGS["stream_status"], "Stream: Stopped")
         dpg.configure_item(TAGS["stream_status"], color=[150, 150, 150])
+
+    # Reset P-streaming buttons
+    if dpg.does_item_exist(TAGS["p_stream_start_btn"]):
+        dpg.configure_item(TAGS["p_stream_start_btn"], enabled=False)
+    if dpg.does_item_exist(TAGS["p_stream_stop_btn"]):
+        dpg.configure_item(TAGS["p_stream_stop_btn"], enabled=False)
+    if dpg.does_item_exist(TAGS["p_stream_interval"]):
+        dpg.configure_item(TAGS["p_stream_interval"], enabled=True)
+    if dpg.does_item_exist(TAGS["p_stream_status"]):
+        dpg.set_value(TAGS["p_stream_status"], "P-Stream: Stopped")
+        dpg.configure_item(TAGS["p_stream_status"], color=[150, 150, 150])
+
+    # Reset P-mode radio to Manual
+    if dpg.does_item_exist(TAGS["p_mode_radio"]):
+        dpg.set_value(TAGS["p_mode_radio"], 0)
+    if dpg.does_item_exist(TAGS["p_control_group"]):
+        dpg.configure_item(TAGS["p_control_group"], show=False)
 
     update_connection_indicator(False)
     update_led_indicator(False)
