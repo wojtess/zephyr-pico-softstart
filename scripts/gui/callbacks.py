@@ -449,6 +449,105 @@ def on_stream_stop_clicked(sender, app_data, user_data: LEDControllerApp) -> Non
     threading.Thread(target=check_stop, daemon=True).start()
 
 
+def on_p_record_start_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Handle P-stream recording start button."""
+    # Check if P-streaming is active
+    if not user_data.is_p_streaming():
+        update_status("Start P-stream first before recording", [255, 150, 50])
+        return
+
+    # Disable start button
+    if dpg.does_item_exist(sender):
+        dpg.configure_item(sender, enabled=False)
+
+    update_status("Starting P-stream recording...", [200, 200, 100])
+    dpg.split_frame()
+
+    task = SerialTask(command=SerialCommand.START_P_RECORD)
+    result_queue = user_data.send_task(task)
+
+    # Check result in separate thread
+    def check_start():
+        try:
+            result = result_queue.get(timeout=2)
+
+            if result.success:
+                update_status(result.message, [100, 200, 100])
+                update_last_response("Recording started")
+
+                # Update UI state
+                if dpg.does_item_exist(TAGS["p_record_start_btn"]):
+                    dpg.configure_item(TAGS["p_record_start_btn"], enabled=False)
+                if dpg.does_item_exist(TAGS["p_record_stop_btn"]):
+                    dpg.configure_item(TAGS["p_record_stop_btn"], enabled=True)
+                if dpg.does_item_exist(TAGS["p_record_status"]):
+                    dpg.set_value(TAGS["p_record_status"], "REC ●")
+                    dpg.configure_item(TAGS["p_record_status"], color=[255, 50, 50])
+
+            else:
+                # Re-enable start button on error
+                if dpg.does_item_exist(sender):
+                    dpg.configure_item(sender, enabled=True)
+
+                update_status(f"Recording start error: {result.message}", [255, 100, 100])
+                update_last_response(f"Error: {result.error or 'Unknown'}")
+
+        except queue.Empty:
+            if dpg.does_item_exist(sender):
+                dpg.configure_item(sender, enabled=True)
+            update_status("Recording start timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_start, daemon=True).start()
+
+
+def on_p_record_stop_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Handle P-stream recording stop button."""
+    # Disable stop button
+    if dpg.does_item_exist(sender):
+        dpg.configure_item(sender, enabled=False)
+
+    update_status("Stopping P-stream recording...", [200, 200, 100])
+    dpg.split_frame()
+
+    task = SerialTask(command=SerialCommand.STOP_P_RECORD)
+    result_queue = user_data.send_task(task)
+
+    # Check result in separate thread
+    def check_stop():
+        try:
+            result = result_queue.get(timeout=2)
+
+            # Re-enable stop button
+            if dpg.does_item_exist(sender):
+                dpg.configure_item(sender, enabled=True)
+
+            if result.success:
+                update_status(result.message, [100, 200, 100])
+                update_last_response("Recording stopped")
+
+                # Update UI state
+                if dpg.does_item_exist(TAGS["p_record_start_btn"]):
+                    dpg.configure_item(TAGS["p_record_start_btn"], enabled=True)
+                if dpg.does_item_exist(TAGS["p_record_stop_btn"]):
+                    dpg.configure_item(TAGS["p_record_stop_btn"], enabled=False)
+                if dpg.does_item_exist(TAGS["p_record_status"]):
+                    dpg.set_value(TAGS["p_record_status"], "Stopped")
+                    dpg.configure_item(TAGS["p_record_status"], color=[150, 150, 150])
+
+            else:
+                update_status(f"Recording stop error: {result.message}", [255, 100, 100])
+                update_last_response(f"Error: {result.error or 'Unknown'}")
+
+        except queue.Empty:
+            if dpg.does_item_exist(sender):
+                dpg.configure_item(sender, enabled=True)
+            update_status("Recording stop timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_stop, daemon=True).start()
+
+
 def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
     """Called every frame to check for health check results."""
     # Check results from worker thread
@@ -505,6 +604,12 @@ def on_p_mode_changed(sender, app_data, user_data: LEDControllerApp) -> None:
                 mode_name = "Manual" if mode == 0 else "P-Control"
                 update_status(f"Mode set to {mode_name}", [100, 200, 100])
                 update_last_response(f"ACK: {mode_name} mode")
+
+                # When switching to AUTO mode, sync gain and feed_forward to firmware
+                # This ensures firmware values match GUI slider positions
+                if mode == 1:  # P-Control (AUTO) mode
+                    sync_p_params_to_firmware(user_data)
+
             else:
                 # Check if disconnected
                 if result.error == "Disconnected" or result.error == "Timeout":
@@ -528,6 +633,55 @@ def on_p_mode_changed(sender, app_data, user_data: LEDControllerApp) -> None:
                 dpg.configure_item(TAGS["p_control_group"], show=False)
 
     threading.Thread(target=check_mode, daemon=True).start()
+
+
+def sync_p_params_to_firmware(app: LEDControllerApp) -> None:
+    """
+    Sync current P-controller parameters (gain, feed_forward) from GUI to firmware.
+
+    Called when switching to AUTO mode to ensure firmware values match GUI sliders.
+    Without this, firmware would use gain=0 and feed_forward=0 (defaults), causing
+    PWM output to always be 0 regardless of error.
+    """
+    # Get current gain value from slider
+    gain = 1.0  # default
+    if dpg.does_item_exist(TAGS["p_gain_slider"]):
+        gain = dpg.get_value(TAGS["p_gain_slider"])
+
+    # Get current feed-forward value from slider
+    ff = 0  # default
+    if dpg.does_item_exist(TAGS["p_ff_slider"]):
+        ff = dpg.get_value(TAGS["p_ff_slider"])
+
+    logger.info(f"Syncing P-params to firmware: gain={gain:.2f}, ff={ff}%")
+
+    # Send gain command
+    gain_task = SerialTask(command=SerialCommand.SET_P_GAIN, p_gain=gain)
+    gain_queue = app.send_task(gain_task)
+
+    # Send feed-forward command
+    ff_task = SerialTask(command=SerialCommand.SET_P_FEED_FORWARD, p_feed_forward=ff)
+    ff_queue = app.send_task(ff_task)
+
+    # Check results in background (non-blocking)
+    def check_sync():
+        try:
+            gain_result = gain_queue.get(timeout=1)
+            if gain_result.success:
+                logger.info(f"Gain synced: {gain:.2f}")
+            else:
+                logger.warning(f"Gain sync failed: {gain_result.message}")
+
+            ff_result = ff_queue.get(timeout=1)
+            if ff_result.success:
+                logger.info(f"Feed-forward synced: {ff}%")
+            else:
+                logger.warning(f"Feed-forward sync failed: {ff_result.message}")
+
+        except queue.Empty:
+            logger.warning("P-param sync timeout")
+
+    threading.Thread(target=check_sync, daemon=True).start()
 
 
 def on_p_setpoint_changed(sender, app_data, user_data: LEDControllerApp) -> None:
@@ -675,6 +829,9 @@ def on_p_stream_start_clicked(sender, app_data, user_data: LEDControllerApp) -> 
                 if dpg.does_item_exist(TAGS["p_stream_status"]):
                     dpg.set_value(TAGS["p_stream_status"], f"P-Stream: Active ({interval_ms}ms)")
                     dpg.configure_item(TAGS["p_stream_status"], color=[100, 255, 100])
+                # Enable recording start button when streaming is active
+                if dpg.does_item_exist(TAGS["p_record_start_btn"]):
+                    dpg.configure_item(TAGS["p_record_start_btn"], enabled=True)
 
             else:
                 # Re-enable start button on error
@@ -732,6 +889,14 @@ def on_p_stream_stop_clicked(sender, app_data, user_data: LEDControllerApp) -> N
                 if dpg.does_item_exist(TAGS["p_stream_status"]):
                     dpg.set_value(TAGS["p_stream_status"], "P-Stream: Stopped")
                     dpg.configure_item(TAGS["p_stream_status"], color=[150, 150, 150])
+                # Disable recording buttons when streaming is stopped
+                if dpg.does_item_exist(TAGS["p_record_start_btn"]):
+                    dpg.configure_item(TAGS["p_record_start_btn"], enabled=False)
+                if dpg.does_item_exist(TAGS["p_record_stop_btn"]):
+                    dpg.configure_item(TAGS["p_record_stop_btn"], enabled=False)
+                if dpg.does_item_exist(TAGS["p_record_status"]):
+                    dpg.set_value(TAGS["p_record_status"], "Stopped")
+                    dpg.configure_item(TAGS["p_record_status"], color=[150, 150, 150])
 
             else:
                 # Check if disconnected

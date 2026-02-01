@@ -25,6 +25,8 @@ class SerialCommand(Enum):
     START_P_STREAM = "start_p_stream"
     STOP_P_STREAM = "stop_p_stream"
     GET_P_STATUS = "get_p_status"
+    START_P_RECORD = "start_p_record"
+    STOP_P_RECORD = "stop_p_record"
     QUIT = "quit"
 
 
@@ -107,4 +109,21 @@ TAGS = {
     "p_series_measured": "p_series_measured",
     "p_series_pwm": "p_series_pwm",
     "p_series_error": "p_series_error",
+    # P-Controller recording
+    "p_record_start_btn": "btn_p_record_start",
+    "p_record_stop_btn": "btn_p_record_stop",
+    "p_record_status": "txt_p_record_status",
+    # P-Controller analysis
+    "p_analyze_btn": "btn_p_analyze",
+    "p_analysis_window": "win_p_analysis",
+    "p_analysis_plot": "plot_p_analysis",
+    "p_analysis_stats": "txt_p_analysis_stats",
+    "p_analysis_table": "table_p_analysis",
+    "p_analysis_file_dialog": "dialog_p_analysis_file",
+    "p_analysis_export_btn": "btn_p_analysis_export",
+    "p_analysis_export_format": "combo_p_analysis_export",
+    "p_analysis_filter_method": "combo_p_analysis_filter",
+    "p_analysis_filter_window": "input_p_analysis_window",
+    "p_analysis_time_range": "input_p_analysis_time_range",
+    "p_analysis_derived_metrics": "txt_p_analysis_derived_metrics"
 }

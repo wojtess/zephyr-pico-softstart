@@ -101,6 +101,12 @@ class LEDControllerApp:
         self._pwm_history = deque(maxlen=self._adc_max_points)
         self._error_history = deque(maxlen=self._adc_max_points)
 
+        # P-Controller recording state
+        self._p_recording: bool = False
+        self._p_record_start_time: float = 0.0
+        self._p_record_file = None
+        self._p_record_data: list = []  # Buffer data, write periodically
+
         # Command queue (visible in GUI) - pending tasks waiting to be processed
         self._pending_tasks: List[SerialTask] = []
         self._processing_task: Optional[SerialTask] = None
@@ -269,6 +275,11 @@ class LEDControllerApp:
                                 self._setpoint_history.pop(0)
                                 self._pwm_history.pop(0)
 
+                            # Record data if recording is active
+                            if self._p_recording:
+                                timestamp = time.time() - self._p_record_start_time
+                                self._p_record_data.append([timestamp, setpoint, measured, pwm, error])
+
                         logger.debug(f"P-stream data: SP={setpoint}, Meas={measured}, PWM={pwm}%")
                     else:
                         logger.warning(f"CRC error in P-stream data: expected 0x{calc_crc:02X}, got 0x{byte_val:02X}")
@@ -352,6 +363,12 @@ class LEDControllerApp:
 
                 elif task.command == SerialCommand.STOP_P_STREAM:
                     result = self._handle_stop_p_stream()
+
+                elif task.command == SerialCommand.START_P_RECORD:
+                    result = self._handle_start_p_record()
+
+                elif task.command == SerialCommand.STOP_P_RECORD:
+                    result = self._handle_stop_p_record()
 
                 # After handler completes, check for leftover bytes in response queue
                 # This detects command collisions, double responses, or other protocol errors
@@ -1328,6 +1345,96 @@ class LEDControllerApp:
             logger.error(f"Unexpected error stopping P-stream: {e}", exc_info=True)
             return SerialResult(cmd, False, "Unexpected error", error=str(e))
 
+    def _handle_start_p_record(self) -> SerialResult:
+        """Handle start P-stream recording command in worker thread."""
+        cmd = SerialCommand.START_P_RECORD
+        logger.info("START_P_RECORD: Starting P-stream recording")
+
+        try:
+            with self._lock:
+                if not self._p_streaming:
+                    logger.warning("START_P_RECORD: Not streaming")
+                    return SerialResult(cmd, False, "Not streaming", error="Not streaming")
+
+                if self._p_recording:
+                    logger.warning("START_P_RECORD: Already recording")
+                    return SerialResult(cmd, False, "Already recording", error="Already recording")
+
+            # Create data directory if needed
+            data_dir = Path(__file__).parent.parent / "data"
+            data_dir.mkdir(exist_ok=True)
+
+            # Create filename with timestamp
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = data_dir / f"p_control_{timestamp}.csv"
+
+            # Open file for writing
+            try:
+                file_handle = open(filename, 'w', newline='')
+                file_handle.write("timestamp,setpoint,measured,pwm,error\n")
+            except IOError as e:
+                logger.error(f"START_P_RECORD: Failed to create file: {e}")
+                return SerialResult(cmd, False, f"Failed to create file: {e}", error=str(e))
+
+            with self._lock:
+                self._p_recording = True
+                self._p_record_start_time = time.time()
+                self._p_record_file = file_handle
+                self._p_record_data.clear()
+
+            logger.info(f"START_P_RECORD: Recording started to {filename}")
+            return SerialResult(cmd, True, f"Recording started: {filename.name}")
+
+        except Exception as e:
+            logger.error(f"Unexpected error starting recording: {e}", exc_info=True)
+            return SerialResult(cmd, False, "Unexpected error", error=str(e))
+
+    def _handle_stop_p_record(self) -> SerialResult:
+        """Handle stop P-stream recording command in worker thread."""
+        cmd = SerialCommand.STOP_P_RECORD
+        logger.info("STOP_P_RECORD: Stopping P-stream recording")
+
+        try:
+            with self._lock:
+                if not self._p_recording:
+                    logger.warning("STOP_P_RECORD: Not recording")
+                    return SerialResult(cmd, False, "Not recording", error="Not recording")
+
+                file_handle = self._p_record_file
+                record_data = list(self._p_record_data)  # Copy data
+                self._p_recording = False
+                self._p_record_file = None
+
+            # Write remaining buffered data
+            samples_written = 0
+            if file_handle and record_data:
+                try:
+                    import csv
+                    writer = csv.writer(file_handle)
+                    writer.writerows(record_data)
+                    samples_written = len(record_data)
+                except Exception as e:
+                    logger.error(f"STOP_P_RECORD: Failed to write data: {e}")
+
+            # Close file
+            if file_handle:
+                try:
+                    file_handle.close()
+                except Exception as e:
+                    logger.error(f"STOP_P_RECORD: Failed to close file: {e}")
+
+            # Clear buffer
+            with self._lock:
+                self._p_record_data.clear()
+
+            logger.info(f"STOP_P_RECORD: Recording stopped, {samples_written} samples saved")
+            return SerialResult(cmd, True, f"Recording stopped ({samples_written} samples)")
+
+        except Exception as e:
+            logger.error(f"Unexpected error stopping recording: {e}", exc_info=True)
+            return SerialResult(cmd, False, "Unexpected error", error=str(e))
+
     # NOTE: Stream worker removed - only ONE thread can access serial!
     # Streaming data will be parsed in main worker loop when _is_streaming is True
 
@@ -1397,6 +1504,39 @@ class LEDControllerApp:
         """Check if currently P-streaming data."""
         with self._lock:
             return self._p_streaming
+
+    def is_p_recording(self) -> bool:
+        """Check if currently recording P-stream data."""
+        with self._lock:
+            return self._p_recording
+
+    def flush_recorded_data(self) -> int:
+        """Flush buffered recording data to file and return count.
+
+        This should be called periodically from the GUI thread to write
+        buffered data to the CSV file.
+        """
+        with self._lock:
+            if not self._p_recording or not self._p_record_file or not self._p_record_data:
+                return 0
+
+            # Copy data to write outside the lock
+            record_data = list(self._p_record_data)
+            self._p_record_data.clear()
+
+        # Write data outside the lock to minimize lock time
+        if record_data:
+            try:
+                import csv
+                writer = csv.writer(self._p_record_file)
+                writer.writerows(record_data)
+                self._p_record_file.flush()
+                logger.debug(f"Flushed {len(record_data)} samples to recording file")
+                return len(record_data)
+            except Exception as e:
+                logger.error(f"Failed to flush recorded data: {e}", exc_info=True)
+                return 0
+        return 0
 
     def get_stream_interval(self) -> int:
         """Get current streaming interval in milliseconds."""
@@ -1471,6 +1611,19 @@ class LEDControllerApp:
         with self._lock:
             if self._is_streaming:
                 self._is_streaming = False
+
+        # Stop recording if active
+        with self._lock:
+            if self._p_recording:
+                self._p_recording = False
+                # Close recording file
+                if self._p_record_file:
+                    try:
+                        self._p_record_file.close()
+                    except Exception:
+                        pass
+                    self._p_record_file = None
+                self._p_record_data.clear()
 
         # Send quit command to worker
         try:
