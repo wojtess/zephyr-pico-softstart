@@ -23,6 +23,8 @@ from .callbacks import (
     on_p_ff_changed,
     on_p_stream_start_clicked,
     on_p_stream_stop_clicked,
+    on_p_record_start_clicked,
+    on_p_record_stop_clicked,
 )
 from .utils import find_ports_with_info, update_status
 
@@ -272,6 +274,42 @@ def create_main_window(app: LEDControllerApp) -> None:
                 default_value="P-Stream: Stopped",
                 color=[150, 150, 150],
             )
+
+            # Data Recording section
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            dpg.add_spacer(height=8)
+            dpg.add_text("Data Recording:", color=[200, 200, 200])
+
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Start Recording",
+                    tag=TAGS["p_record_start_btn"],
+                    callback=on_p_record_start_clicked,
+                    user_data=app,
+                    width=120,
+                    enabled=False,
+                )
+                dpg.add_spacer(width=10)
+                dpg.add_button(
+                    label="Stop Recording",
+                    tag=TAGS["p_record_stop_btn"],
+                    callback=on_p_record_stop_clicked,
+                    user_data=app,
+                    width=120,
+                    enabled=False,
+                )
+
+            # Recording status indicator
+            dpg.add_spacer(height=5)
+            with dpg.group(horizontal=True):
+                dpg.add_text("Recording:", color=[180, 180, 180])
+                dpg.add_spacer(width=5)
+                dpg.add_text(
+                    tag=TAGS["p_record_status"],
+                    default_value="Stopped",
+                    color=[150, 150, 150],
+                )
 
             # P-Stream Plot
             dpg.add_spacer(height=10)

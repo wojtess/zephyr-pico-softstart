@@ -117,6 +117,12 @@ def main() -> int:
                         if pwm_series and dpg.does_item_exist(TAGS["p_pwm_output"]):
                             dpg.set_value(TAGS["p_pwm_output"], f"{pwm_series[-1]}%")
 
+                        # Flush recording data periodically (when recording is active)
+                        if app.is_p_recording():
+                            count = app.flush_recorded_data()
+                            if count > 0:
+                                logger.debug(f"Flushed {count} samples to recording")
+
                     time.sleep(0.05)  # 20 FPS for plot updates
                 except Exception:
                     break
