@@ -17,6 +17,12 @@ from .callbacks import (
     on_adc_read_clicked,
     on_stream_start_clicked,
     on_stream_stop_clicked,
+    on_p_mode_changed,
+    on_p_setpoint_changed,
+    on_p_gain_changed,
+    on_p_ff_changed,
+    on_p_stream_start_clicked,
+    on_p_stream_stop_clicked,
 )
 from .utils import find_ports_with_info, update_status
 
@@ -135,6 +141,180 @@ def create_main_window(app: LEDControllerApp) -> None:
                 color=[100, 200, 255],
             )
 
+        # P-Controller Section
+        dpg.add_spacer(height=15)
+        dpg.add_separator()
+        dpg.add_spacer(height=10)
+
+        dpg.add_text("P-Controller:", color=[200, 200, 200])
+
+        # Mode switch
+        dpg.add_spacer(height=5)
+        with dpg.group(horizontal=True):
+            dpg.add_text("Mode:", color=[180, 180, 180])
+            dpg.add_spacer(width=10)
+            dpg.add_radio_button(
+                items=["Manual", "P-Control"],
+                tag=TAGS["p_mode_radio"],
+                default_value=0,
+                callback=on_p_mode_changed,
+                user_data=app,
+                horizontal=True
+            )
+
+        # P-Control controls (hidden by default)
+        with dpg.group(tag=TAGS["p_control_group"], show=False):
+            # Setpoint
+            dpg.add_spacer(height=10)
+            dpg.add_text("Setpoint (ADC 0-4095):", color=[180, 180, 180])
+            dpg.add_input_int(
+                tag=TAGS["p_setpoint_input"],
+                default_value=2000,
+                min_value=0,
+                max_value=4095,
+                width=150,
+                callback=on_p_setpoint_changed,
+                user_data=app
+            )
+
+            # P-Gain slider
+            dpg.add_spacer(height=8)
+            dpg.add_text("P-Gain:", color=[180, 180, 180])
+            with dpg.group(horizontal=True):
+                dpg.add_slider_float(
+                    tag=TAGS["p_gain_slider"],
+                    default_value=1.0,
+                    min_value=0.0,
+                    max_value=10.0,
+                    clamped=True,
+                    width=200,
+                    callback=on_p_gain_changed,
+                    user_data=app
+                )
+                dpg.add_text(
+                    tag=TAGS["p_gain_label"],
+                    default_value="1.00",
+                    color=[100, 200, 255]
+                )
+
+            # Feed Forward slider
+            dpg.add_spacer(height=8)
+            dpg.add_text("Feed Forward (PWM %):", color=[180, 180, 180])
+            with dpg.group(horizontal=True):
+                dpg.add_slider_int(
+                    tag=TAGS["p_ff_slider"],
+                    default_value=0,
+                    min_value=0,
+                    max_value=100,
+                    clamped=True,
+                    width=200,
+                    callback=on_p_ff_changed,
+                    user_data=app
+                )
+                dpg.add_text(
+                    tag=TAGS["p_ff_label"],
+                    default_value="0%",
+                    color=[100, 200, 255]
+                )
+
+            # Calculated PWM display
+            dpg.add_spacer(height=8)
+            with dpg.group(horizontal=True):
+                dpg.add_text("PWM Output:", color=[180, 180, 180])
+                dpg.add_spacer(width=5)
+                dpg.add_text(
+                    tag=TAGS["p_pwm_output"],
+                    default_value="--%",
+                    color=[100, 255, 100]
+                )
+
+            # Streaming controls
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            dpg.add_spacer(height=8)
+            dpg.add_text("P-Stream:", color=[200, 200, 200])
+
+            with dpg.group(horizontal=True):
+                dpg.add_text("Interval (ms):", color=[180, 180, 180])
+                dpg.add_spacer(width=5)
+                dpg.add_input_int(
+                    tag=TAGS["p_stream_interval"],
+                    default_value=10,
+                    min_value=1,
+                    max_value=1000,
+                    width=100
+                )
+
+            dpg.add_spacer(height=5)
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Start",
+                    tag=TAGS["p_stream_start_btn"],
+                    callback=on_p_stream_start_clicked,
+                    user_data=app,
+                    width=100,
+                    enabled=False
+                )
+                dpg.add_spacer(width=10)
+                dpg.add_button(
+                    label="Stop",
+                    tag=TAGS["p_stream_stop_btn"],
+                    callback=on_p_stream_stop_clicked,
+                    user_data=app,
+                    width=100,
+                    enabled=False
+                )
+
+            # P-Stream status
+            dpg.add_spacer(height=5)
+            dpg.add_text(
+                tag=TAGS["p_stream_status"],
+                default_value="P-Stream: Stopped",
+                color=[150, 150, 150],
+            )
+
+            # P-Stream Plot
+            dpg.add_spacer(height=10)
+            dpg.add_text("P-Stream Data (setpoint, measured, PWM):", color=[150, 150, 150])
+            dpg.add_spacer(height=5)
+
+            with dpg.plot(
+                tag=TAGS["p_stream_plot"],
+                height=200,
+                width=-1,
+                no_menus=True,
+                no_box_select=True,
+            ):
+                x_axis = dpg.add_plot_axis(dpg.mvXAxis, tag="p_stream_x_axis", label="Time (s ago)")
+
+                # Left Y axis (ADC values 0-4095)
+                y_axis_adc = dpg.add_plot_axis(dpg.mvYAxis, tag="p_stream_y_adc", label="ADC Value")
+
+                # Right Y axis (PWM 0-100%)
+                y_axis_pwm = dpg.add_plot_axis(dpg.mvYAxis2, tag="p_stream_y_pwm", label="PWM (%)")
+
+                # Three series for P-stream
+                dpg.add_line_series(
+                    [], [],
+                    tag=TAGS["p_series_setpoint"],
+                    label="Setpoint",
+                    parent=y_axis_adc,
+                )
+                dpg.add_line_series(
+                    [], [],
+                    tag=TAGS["p_series_measured"],
+                    label="Measured",
+                    parent=y_axis_adc,
+                )
+                dpg.add_line_series(
+                    [], [],
+                    tag=TAGS["p_series_pwm"],
+                    label="PWM (%)",
+                    parent=y_axis_pwm,
+                )
+
+                dpg.add_plot_legend()
+
         # Status messages
         dpg.add_spacer(height=15)
         dpg.add_separator()
@@ -195,41 +375,37 @@ def create_main_window(app: LEDControllerApp) -> None:
                 enabled=False,
             )
 
-        # ADC Plot
+        # ADC History Plot
         dpg.add_spacer(height=10)
         dpg.add_text("ADC History (last 100 samples):", color=[150, 150, 150])
 
         dpg.add_spacer(height=5)
 
-        # Create plot with x-axis tag
+        # ADC History plot with raw value and voltage
         with dpg.plot(
-            tag=TAGS["adc_plot"],
+            tag=TAGS["adc_history_plot"],
             height=200,
             width=-1,
             no_menus=True,
             no_box_select=True,
         ):
-            # Create x and y axes
-            x_axis = dpg.add_plot_axis(dpg.mvXAxis, tag="adc_plot_x_axis", label="Time (s ago)")
-            y_axis = dpg.add_plot_axis(dpg.mvYAxis, tag="adc_plot_y_axis", label="Value")
+            x_axis = dpg.add_plot_axis(dpg.mvXAxis, tag="adc_history_x_axis", label="Time (s ago)")
+            y_axis = dpg.add_plot_axis(dpg.mvYAxis, tag="adc_history_y_axis", label="Value")
 
-            # Add two series: raw value (0-4095) and voltage (0-3.3V) - parent must be y_axis
+            # Two series: raw (0-4095) and voltage (0-3.3V)
             dpg.add_line_series(
-                [],
-                [],
+                [], [],
                 tag=TAGS["adc_series_raw"],
                 label="Raw (0-4095)",
                 parent=y_axis,
             )
             dpg.add_line_series(
-                [],
-                [],
+                [], [],
                 tag=TAGS["adc_series_voltage"],
                 label="Voltage (V)",
                 parent=y_axis,
             )
 
-            # Add legend to allow toggling series on/off
             dpg.add_plot_legend()
 
         # ADC Streaming section

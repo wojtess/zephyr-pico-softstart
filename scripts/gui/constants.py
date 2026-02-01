@@ -18,6 +18,13 @@ class SerialCommand(Enum):
     START_STREAM = "start_stream"
     STOP_STREAM = "stop_stream"
     CHECK_HEALTH = "check_health"
+    SET_P_MODE = "set_p_mode"
+    SET_P_SETPOINT = "set_p_setpoint"
+    SET_P_GAIN = "set_p_gain"
+    SET_P_FEED_FORWARD = "set_p_feed_forward"
+    START_P_STREAM = "start_p_stream"
+    STOP_P_STREAM = "stop_p_stream"
+    GET_P_STATUS = "get_p_status"
     QUIT = "quit"
 
 
@@ -31,6 +38,11 @@ class SerialTask:
     result_queue: Optional[queue.Queue] = None
     adc_interval: Optional[float] = None  # For auto-read ADC (seconds)
     stream_interval: Optional[int] = None  # For streaming (milliseconds)
+    p_mode: Optional[int] = None
+    p_setpoint: Optional[int] = None
+    p_gain: Optional[float] = None
+    p_feed_forward: Optional[int] = None
+    p_stream_interval: Optional[int] = None  # For P-streaming (milliseconds)
 
 
 @dataclass
@@ -61,7 +73,7 @@ TAGS = {
     # ADC tags
     "adc_read_btn": "btn_adc_read",
     "adc_auto_checkbox": "chk_adc_auto",
-    "adc_plot": "plot_adc",
+    "adc_history_plot": "plot_adc_history",
     "adc_value_raw": "txt_adc_raw",
     "adc_value_voltage": "txt_adc_voltage",
     "adc_series_raw": "series_adc_raw",
@@ -75,4 +87,23 @@ TAGS = {
     "queue_label": "txt_queue_label",
     "queue_count": "txt_queue_count",
     "queue_processing": "txt_queue_processing",
+    # P-Controller mode and controls
+    "p_mode_radio": "radio_p_mode",
+    "p_control_group": "group_p_control",
+    "p_setpoint_input": "input_p_setpoint",
+    "p_gain_slider": "slider_p_gain",
+    "p_gain_label": "txt_p_gain",
+    "p_ff_slider": "slider_p_ff",
+    "p_ff_label": "txt_p_ff",
+    "p_pwm_output": "txt_p_pwm",
+    # P-Controller streaming
+    "p_stream_start_btn": "btn_p_stream_start",
+    "p_stream_stop_btn": "btn_p_stream_stop",
+    "p_stream_interval": "input_p_stream_interval",
+    "p_stream_status": "txt_p_stream_status",
+    "p_stream_plot": "plot_p_stream",
+    # Plot series for P-stream
+    "p_series_setpoint": "p_series_setpoint",
+    "p_series_measured": "p_series_measured",
+    "p_series_pwm": "p_series_pwm",
 }

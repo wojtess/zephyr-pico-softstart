@@ -75,22 +75,45 @@ def main() -> int:
             import time
             while dpg.is_dearpygui_running():
                 try:
+                    # Update ADC History plot (when ADC streaming is active)
                     if app.is_streaming():
                         x_axis, raw_series, volt_series = app.get_adc_history()
-                        if dpg.does_item_exist(TAGS["adc_plot"]):
+
+                        # Update ADC history plot
+                        if dpg.does_item_exist(TAGS["adc_history_plot"]):
                             if dpg.does_item_exist(TAGS["adc_series_raw"]):
                                 dpg.set_value(TAGS["adc_series_raw"], [x_axis, raw_series])
                             if dpg.does_item_exist(TAGS["adc_series_voltage"]):
                                 dpg.set_value(TAGS["adc_series_voltage"], [x_axis, volt_series])
 
-                            # Update value displays with latest data
-                            if raw_series:
-                                latest_raw = raw_series[-1]
-                                latest_voltage = volt_series[-1]
-                                if dpg.does_item_exist(TAGS["adc_value_raw"]):
-                                    dpg.set_value(TAGS["adc_value_raw"], f"{latest_raw}")
-                                if dpg.does_item_exist(TAGS["adc_value_voltage"]):
-                                    dpg.set_value(TAGS["adc_value_voltage"], f"{latest_voltage:.3f} V")
+                        # Update value displays with latest data
+                        if raw_series:
+                            latest_raw = raw_series[-1]
+                            latest_voltage = volt_series[-1]
+                            if dpg.does_item_exist(TAGS["adc_value_raw"]):
+                                dpg.set_value(TAGS["adc_value_raw"], f"{latest_raw}")
+                            if dpg.does_item_exist(TAGS["adc_value_voltage"]):
+                                dpg.set_value(TAGS["adc_value_voltage"], f"{latest_voltage:.3f} V")
+
+                    # Update P-Stream plot (when P-streaming is active)
+                    if app.is_p_streaming():
+                        x_axis, raw_series, volt_series = app.get_adc_history()
+                        setpoint_series = list(app._setpoint_history)
+                        pwm_series = list(app._pwm_history)
+
+                        # Update P-stream plot
+                        if dpg.does_item_exist(TAGS["p_stream_plot"]):
+                            if dpg.does_item_exist(TAGS["p_series_setpoint"]):
+                                dpg.set_value(TAGS["p_series_setpoint"], [x_axis, setpoint_series])
+                            if dpg.does_item_exist(TAGS["p_series_measured"]):
+                                dpg.set_value(TAGS["p_series_measured"], [x_axis, raw_series])
+                            if dpg.does_item_exist(TAGS["p_series_pwm"]):
+                                dpg.set_value(TAGS["p_series_pwm"], [x_axis, pwm_series])
+
+                        # Update PWM output display for P-controller
+                        if pwm_series and dpg.does_item_exist(TAGS["p_pwm_output"]):
+                            dpg.set_value(TAGS["p_pwm_output"], f"{pwm_series[-1]}%")
+
                     time.sleep(0.05)  # 20 FPS for plot updates
                 except Exception:
                     break

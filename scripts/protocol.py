@@ -23,7 +23,7 @@ Protocol:
     CRC-8: Polynomial 0x07, Initial 0x00
 """
 
-from typing import Tuple
+from typing import Tuple, Dict
 
 # Protocol constants
 CMD_SET_LED = 0x01
@@ -31,6 +31,13 @@ CMD_SET_PWM = 0x02
 CMD_READ_ADC = 0x03
 CMD_START_STREAM = 0x04
 CMD_STOP_STREAM = 0x05
+CMD_SET_MODE = 0x06  # Set mode (0=manual, 1=P-control)
+CMD_GET_P_STATUS = 0x0B  # Get P-controller status
+CMD_SET_P_SETPOINT = 0x07  # Set P-controller setpoint (0-4095)
+CMD_SET_P_GAIN = 0x08  # Set P-controller gain (float value sent as int scaled)
+CMD_START_P_STREAM = 0x09  # Start P-controller streaming
+CMD_STOP_P_STREAM = 0x0A  # Stop P-controller streaming
+CMD_SET_FEED_FORWARD = 0x0C  # Set feed-forward PWM (0-100)
 
 RESP_ACK = 0xFF
 RESP_NACK = 0xFE
@@ -39,6 +46,10 @@ RESP_DEBUG = 0xFD
 ERR_CRC = 0x01
 ERR_INVALID_CMD = 0x02
 ERR_INVALID_VAL = 0x03
+ERR_INVALID_MODE = 0x10
+ERR_INVALID_SETPOINT = 0x11
+ERR_INVALID_GAIN = 0x12
+ERR_INVALID_FF = 0x13
 
 
 def crc8(data: bytes) -> int:
@@ -157,6 +168,10 @@ def get_error_name(error_code: int) -> str:
         ERR_CRC: "CRC error",
         ERR_INVALID_CMD: "Invalid command",
         ERR_INVALID_VAL: "Invalid value",
+        ERR_INVALID_MODE: "Invalid mode",
+        ERR_INVALID_SETPOINT: "Invalid setpoint",
+        ERR_INVALID_GAIN: "Invalid gain",
+        ERR_INVALID_FF: "Invalid feed-forward",
     }
     return errors.get(error_code, f"Unknown error {error_code}")
 
@@ -246,3 +261,194 @@ def parse_stream_data(resp: bytes) -> Tuple[int, int]:
     # Parse ADC value (12-bit, big-endian)
     adc_value = (resp[1] << 8) | resp[2]
     return adc_value, 0
+
+
+def parse_p_stream_data(resp: bytes) -> Tuple[int, int, int, int]:
+    """Parse P-controller streaming data response from device
+
+    Response format: [CMD_START_P_STREAM][SP_H][SP_L][MEAS_H][MEAS_L][PWM][CRC8]
+    - SP_H, SP_L: Setpoint (16-bit, 0-4095)
+    - MEAS_H, MEAS_L: Measured ADC value (16-bit, 0-4095)
+    - PWM: PWM output (0-100)
+    - CRC8: Checksum
+
+    Args:
+        resp: Response bytes (7 bytes)
+
+    Returns:
+        Tuple of (setpoint, measured, pwm, error_code)
+        - setpoint: Setpoint value (0-4095), or -1 on error
+        - measured: Measured ADC value (0-4095), or -1 on error
+        - pwm: PWM output (0-100), or -1 on error
+        - error_code: 0 for success, error code otherwise
+    """
+    if not resp or len(resp) < 7:
+        return -1, -1, -1, 0
+
+    # Verify response type (should be CMD_START_P_STREAM as data marker)
+    if resp[0] != CMD_START_P_STREAM:
+        return -1, -1, -1, ERR_INVALID_CMD
+
+    # Verify CRC
+    calculated_crc = crc8(resp[:6])
+    if resp[6] != calculated_crc:
+        return -1, -1, -1, ERR_CRC
+
+    # Parse values (16-bit big-endian for setpoint and measured, 8-bit for PWM)
+    setpoint = (resp[1] << 8) | resp[2]
+    measured = (resp[3] << 8) | resp[4]
+    pwm = resp[5]
+    return setpoint, measured, pwm, 0
+
+
+def build_set_mode_frame(mode: int) -> bytes:
+    """Build a set mode frame (3-byte frame)
+
+    Frame format: [CMD_SET_MODE][MODE][CRC8]
+
+    Args:
+        mode: Mode (0=manual, 1=p-control)
+
+    Returns:
+        Complete 3-byte frame
+    """
+    return build_frame(CMD_SET_MODE, mode)
+
+
+def build_set_p_setpoint_frame(setpoint: int) -> bytes:
+    """Build a set P setpoint frame (4-byte frame)
+
+    Frame format: [CMD_SET_P_SETPOINT][SP_H][SP_L][CRC8]
+
+    Args:
+        setpoint: Setpoint value (0-4095)
+
+    Returns:
+        Complete 4-byte frame
+    """
+    sp_h = (setpoint >> 8) & 0xFF
+    sp_l = setpoint & 0xFF
+    cmd_sp = bytes([CMD_SET_P_SETPOINT, sp_h, sp_l])
+    checksum = crc8(cmd_sp)
+    return cmd_sp + bytes([checksum])
+
+
+def build_set_p_gain_frame(gain: float) -> bytes:
+    """Build a set P gain frame (4-byte frame)
+
+    Gain is sent as integer value * 100 (e.g., 1.5 -> 150) in 16-bit H/L format
+
+    Frame format: [CMD_SET_P_GAIN][GAIN_H][GAIN_L][CRC8]
+
+    Args:
+        gain: P gain value (0.0-10.0)
+
+    Returns:
+        Complete 4-byte frame
+    """
+    gain_int = int(gain * 100)
+    gain_int = max(0, min(1000, gain_int))  # Clamp to valid range
+    gain_h = (gain_int >> 8) & 0xFF
+    gain_l = gain_int & 0xFF
+    cmd_gain = bytes([CMD_SET_P_GAIN, gain_h, gain_l])
+    checksum = crc8(cmd_gain)
+    return cmd_gain + bytes([checksum])
+
+
+def build_set_feed_forward_frame(pwm: int) -> bytes:
+    """Build a set feed-forward frame (3-byte frame)
+
+    Frame format: [CMD_SET_FEED_FORWARD][PWM][CRC8]
+
+    Args:
+        pwm: Feed-forward PWM value (0-100)
+
+    Returns:
+        Complete 3-byte frame
+    """
+    return build_frame(CMD_SET_FEED_FORWARD, pwm)
+
+
+def build_p_stream_start_frame(interval_ms: int) -> bytes:
+    """Build a P-stream start request frame (4-byte frame)
+
+    Frame format: [CMD_START_P_STREAM][INTERVAL_H][INTERVAL_L][CRC8]
+
+    Args:
+        interval_ms: Sampling interval in milliseconds (10-60000)
+
+    Returns:
+        Complete 4-byte frame
+    """
+    if not (10 <= interval_ms <= 60000):
+        raise ValueError(f"Interval must be 10-60000 ms, got {interval_ms}")
+
+    interval_h = (interval_ms >> 8) & 0xFF
+    interval_l = interval_ms & 0xFF
+    cmd_interval = bytes([CMD_START_P_STREAM, interval_h, interval_l])
+    checksum = crc8(cmd_interval)
+    return cmd_interval + bytes([checksum])
+
+
+def build_p_stream_stop_frame() -> bytes:
+    """Build a P-stream stop request frame (2-byte frame)
+
+    Frame format: [CMD_STOP_P_STREAM][CRC8]
+
+    Returns:
+        Complete 2-byte frame
+    """
+    cmd_byte = bytes([CMD_STOP_P_STREAM])
+    checksum = crc8(cmd_byte)
+    return cmd_byte + bytes([checksum])
+
+
+def build_get_p_status_frame() -> bytes:
+    """Build a get P-controller status frame (2-byte frame)
+
+    Frame format: [CMD_GET_P_STATUS][CRC8]
+
+    Returns:
+        Complete 2-byte frame
+    """
+    cmd_byte = bytes([CMD_GET_P_STATUS])
+    checksum = crc8(cmd_byte)
+    return cmd_byte + bytes([checksum])
+
+
+def parse_p_status_response(resp: bytes) -> Tuple[int, int, int, int]:
+    """Parse P-controller status response from device
+
+    Response format: [CMD_GET_P_STATUS][MODE][SP_H][SP_L][PWM][CRC8]
+    - MODE: Operation mode (0=manual, 1=auto)
+    - SP_H, SP_L: Setpoint (16-bit, 0-4095)
+    - PWM: Current PWM output (0-100)
+    - CRC8: Checksum
+
+    Args:
+        resp: Response bytes (6 bytes)
+
+    Returns:
+        Tuple of (mode, setpoint, pwm, error_code)
+        - mode: Operation mode (0=manual, 1=auto), or -1 on error
+        - setpoint: Setpoint value (0-4095), or -1 on error
+        - pwm: PWM output (0-100), or -1 on error
+        - error_code: 0 for success, error code otherwise
+    """
+    if not resp or len(resp) < 6:
+        return -1, -1, -1, 0
+
+    # Verify response type
+    if resp[0] != CMD_GET_P_STATUS:
+        return -1, -1, -1, ERR_INVALID_CMD
+
+    # Verify CRC
+    calculated_crc = crc8(resp[:5])
+    if resp[5] != calculated_crc:
+        return -1, -1, -1, ERR_CRC
+
+    # Parse values
+    mode = resp[1]
+    setpoint = (resp[2] << 8) | resp[3]
+    pwm = resp[4]
+    return mode, setpoint, pwm, 0

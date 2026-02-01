@@ -28,6 +28,12 @@ from protocol import (
     CMD_READ_ADC,
     CMD_START_STREAM,
     CMD_STOP_STREAM,
+    CMD_SET_MODE,
+    CMD_SET_P_SETPOINT,
+    CMD_SET_P_GAIN,
+    CMD_START_P_STREAM,
+    CMD_STOP_P_STREAM,
+    CMD_SET_FEED_FORWARD,
     RESP_ACK,
     RESP_NACK,
     RESP_DEBUG,
@@ -35,8 +41,15 @@ from protocol import (
     build_adc_frame,
     build_stream_start_frame,
     build_stream_stop_frame,
+    build_set_mode_frame,
+    build_set_p_setpoint_frame,
+    build_set_p_gain_frame,
+    build_set_feed_forward_frame,
+    build_p_stream_start_frame,
+    build_p_stream_stop_frame,
     parse_adc_response,
     parse_stream_data,
+    parse_p_stream_data,
     get_error_name,
     crc8,
 )
@@ -76,6 +89,17 @@ class LEDControllerApp:
         self._is_streaming: bool = False
         self._stream_interval: int = 100  # milliseconds
 
+        # P-Controller state
+        self._p_mode: int = 0  # 0=manual, 1=p_control
+        self._p_setpoint: int = 0
+        self._p_gain: float = 1.0
+        self._p_feed_forward: int = 0
+        self._p_streaming: bool = False
+
+        # History for P-controller plot (deques)
+        self._setpoint_history = deque(maxlen=self._adc_max_points)
+        self._pwm_history = deque(maxlen=self._adc_max_points)
+
         # Command queue (visible in GUI) - pending tasks waiting to be processed
         self._pending_tasks: List[SerialTask] = []
         self._processing_task: Optional[SerialTask] = None
@@ -107,6 +131,7 @@ class LEDControllerApp:
         This is THE ONE AND ONLY data receiver. It parses all incoming data
         and routes it appropriately:
         - Streaming data (0x04 + ADC_H + ADC_L + CRC) -> add to plot
+        - P-stream data (0x09 + SP_H + SP_L + MEAS_H + MEAS_L + PWM + CRC) -> add to plot
         - ALL other bytes -> pass to response queue for handlers
         """
         logger.info("Data reader thread running")
@@ -115,6 +140,12 @@ class LEDControllerApp:
         state = "WAIT_MARKER"
         adc_h = 0
         adc_l = 0
+        # P-stream parsing state
+        p_sp_h = 0
+        p_sp_l = 0
+        p_meas_h = 0
+        p_meas_l = 0
+        p_pwm = 0
 
         while self._running:
             # Only read when connected
@@ -138,6 +169,9 @@ class LEDControllerApp:
                     if byte_val == CMD_START_STREAM:
                         # Streaming data packet starts - consume it
                         state = "ADC_H"
+                    elif byte_val == CMD_START_P_STREAM:
+                        # P-stream data packet starts - consume it
+                        state = "P_SP_H"
                     elif byte_val == RESP_DEBUG:
                         # Debug packet - read and log code byte
                         code_byte = conn.read(1)
@@ -187,6 +221,58 @@ class LEDControllerApp:
                     # Reset state
                     state = "WAIT_MARKER"
 
+                # P-stream parsing states
+                elif state == "P_SP_H":
+                    p_sp_h = byte_val
+                    state = "P_SP_L"
+
+                elif state == "P_SP_L":
+                    p_sp_l = byte_val
+                    state = "P_MEAS_H"
+
+                elif state == "P_MEAS_H":
+                    p_meas_h = byte_val
+                    state = "P_MEAS_L"
+
+                elif state == "P_MEAS_L":
+                    p_meas_l = byte_val
+                    state = "P_PWM"
+
+                elif state == "P_PWM":
+                    p_pwm = byte_val
+                    state = "P_CRC"
+
+                elif state == "P_CRC":
+                    # Validate CRC and add to plot
+                    calc_crc = crc8(bytes([CMD_START_P_STREAM, p_sp_h, p_sp_l, p_meas_h, p_meas_l, p_pwm]))
+                    if byte_val == calc_crc:
+                        setpoint = (p_sp_h << 8) | p_sp_l
+                        measured = (p_meas_h << 8) | p_meas_l
+                        pwm = p_pwm
+
+                        # Add to history
+                        with self._lock:
+                            self._adc_time_history.append(time.time())
+                            self._adc_raw_history.append(measured)
+                            self._adc_voltage_history.append((measured / 4095.0) * 3.3)
+                            self._setpoint_history.append(setpoint)
+                            self._pwm_history.append(pwm)
+
+                            # Trim to max points
+                            if len(self._adc_time_history) > self._adc_max_points:
+                                self._adc_time_history.pop(0)
+                                self._adc_raw_history.pop(0)
+                                self._adc_voltage_history.pop(0)
+                                self._setpoint_history.pop(0)
+                                self._pwm_history.pop(0)
+
+                        logger.debug(f"P-stream data: SP={setpoint}, Meas={measured}, PWM={pwm}%")
+                    else:
+                        logger.warning(f"CRC error in P-stream data: expected 0x{calc_crc:02X}, got 0x{byte_val:02X}")
+
+                    # Reset state
+                    state = "WAIT_MARKER"
+
             except serial.SerialException as e:
                 logger.error(f"Serial error in data reader: {e}")
                 # Connection lost
@@ -194,6 +280,7 @@ class LEDControllerApp:
                     self._is_connected = False
                     self._serial_connection = None
                     self._is_streaming = False
+                    self._p_streaming = False
                 state = "WAIT_MARKER"
             except Exception as e:
                 logger.error(f"Error in data reader: {e}", exc_info=True)
@@ -244,6 +331,24 @@ class LEDControllerApp:
 
                 elif task.command == SerialCommand.CHECK_HEALTH:
                     result = self._handle_health_check()
+
+                elif task.command == SerialCommand.SET_P_MODE:
+                    result = self._handle_set_p_mode(task.p_mode)
+
+                elif task.command == SerialCommand.SET_P_SETPOINT:
+                    result = self._handle_set_p_setpoint(task.p_setpoint)
+
+                elif task.command == SerialCommand.SET_P_GAIN:
+                    result = self._handle_set_p_gain(task.p_gain)
+
+                elif task.command == SerialCommand.SET_P_FEED_FORWARD:
+                    result = self._handle_set_p_feed_forward(task.p_feed_forward)
+
+                elif task.command == SerialCommand.START_P_STREAM:
+                    result = self._handle_start_p_stream(task.p_stream_interval)
+
+                elif task.command == SerialCommand.STOP_P_STREAM:
+                    result = self._handle_stop_p_stream()
 
                 # After handler completes, check for leftover bytes in response queue
                 # This detects command collisions, double responses, or other protocol errors
@@ -812,6 +917,414 @@ class LEDControllerApp:
             logger.error(f"Unexpected error stopping stream: {e}", exc_info=True)
             return SerialResult(cmd, False, "Unexpected error", error=str(e))
 
+    def _handle_set_p_mode(self, mode: int) -> SerialResult:
+        """Handle set mode command in worker thread."""
+        cmd = SerialCommand.SET_P_MODE
+        logger.info(f"SET_P_MODE: mode={mode}")
+
+        try:
+            with self._lock:
+                if not self._serial_connection or not self._serial_connection.is_open:
+                    logger.warning("SET_P_MODE: Not connected")
+                    return SerialResult(cmd, False, "Not connected", error="No connection")
+
+                # Validate mode
+                if mode not in (0, 1):
+                    logger.warning(f"SET_P_MODE: Invalid mode {mode}")
+                    return SerialResult(cmd, False, "Invalid mode (0=manual, 1=P-control)", error="Invalid value")
+
+                # Build and send frame
+                frame = build_set_mode_frame(mode)
+                logger.info(f"SET_P_MODE: sending frame: {frame.hex()}")
+
+                self._serial_connection.write(frame)
+                self._serial_connection.flush()
+
+            # Read response from response queue: 1 byte (ACK/NACK)
+            try:
+                resp_type = self._response_queue.get(timeout=2.0)
+            except queue.Empty:
+                logger.error("SET_P_MODE: No response from device (timeout)")
+                return SerialResult(cmd, False, "Device not responding (timeout)", error="Timeout")
+
+            # If NACK, read error code byte
+            err_code = 0
+            if resp_type == RESP_NACK:
+                try:
+                    err_code = self._response_queue.get(timeout=1.0)
+                except queue.Empty:
+                    logger.warning("SET_P_MODE: NACK received but no error code")
+
+            logger.info(f"SET_P_MODE: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
+
+            if resp_type == RESP_ACK:
+                with self._lock:
+                    self._p_mode = mode
+                logger.info(f"SET_P_MODE: ACK - Mode set to {mode}")
+                return SerialResult(cmd, True, f"Mode set to {'Manual' if mode == 0 else 'P-Control'}")
+            else:  # RESP_NACK
+                error_name = get_error_name(err_code)
+                logger.warning(f"SET_P_MODE: NACK - {error_name}")
+                return SerialResult(cmd, False, f"Set mode failed: {error_name}", error=error_name)
+
+        except serial.SerialException as e:
+            error_msg = str(e)
+            if "device disconnected" in error_msg.lower():
+                with self._lock:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+                logger.warning("Device disconnected during set mode")
+                return SerialResult(cmd, False, "Device disconnected", error="Disconnected")
+            else:
+                logger.error(f"Serial error: {e}")
+                return SerialResult(cmd, False, "Communication error", error=str(e))
+
+        except Exception as e:
+            logger.error(f"Unexpected error setting mode: {e}", exc_info=True)
+            return SerialResult(cmd, False, "Unexpected error", error=str(e))
+
+    def _handle_set_p_setpoint(self, setpoint: int) -> SerialResult:
+        """Handle set P setpoint command in worker thread."""
+        cmd = SerialCommand.SET_P_SETPOINT
+        logger.info(f"SET_P_SETPOINT: setpoint={setpoint}")
+
+        try:
+            with self._lock:
+                if not self._serial_connection or not self._serial_connection.is_open:
+                    logger.warning("SET_P_SETPOINT: Not connected")
+                    return SerialResult(cmd, False, "Not connected", error="No connection")
+
+                # Validate setpoint range
+                if not (0 <= setpoint <= 4095):
+                    logger.warning(f"SET_P_SETPOINT: Invalid setpoint {setpoint}")
+                    return SerialResult(cmd, False, "Invalid setpoint (0-4095)", error="Invalid value")
+
+                # Build and send frame
+                frame = build_set_p_setpoint_frame(setpoint)
+                logger.info(f"SET_P_SETPOINT: sending frame: {frame.hex()}")
+
+                self._serial_connection.write(frame)
+                self._serial_connection.flush()
+
+            # Read response from response queue: 1 byte (ACK/NACK)
+            try:
+                resp_type = self._response_queue.get(timeout=2.0)
+            except queue.Empty:
+                logger.error("SET_P_SETPOINT: No response from device (timeout)")
+                return SerialResult(cmd, False, "Device not responding (timeout)", error="Timeout")
+
+            # If NACK, read error code byte
+            err_code = 0
+            if resp_type == RESP_NACK:
+                try:
+                    err_code = self._response_queue.get(timeout=1.0)
+                except queue.Empty:
+                    logger.warning("SET_P_SETPOINT: NACK received but no error code")
+
+            logger.info(f"SET_P_SETPOINT: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
+
+            if resp_type == RESP_ACK:
+                with self._lock:
+                    self._p_setpoint = setpoint
+                logger.info(f"SET_P_SETPOINT: ACK - Setpoint set to {setpoint}")
+                return SerialResult(cmd, True, f"Setpoint set to {setpoint}")
+            else:  # RESP_NACK
+                error_name = get_error_name(err_code)
+                logger.warning(f"SET_P_SETPOINT: NACK - {error_name}")
+                return SerialResult(cmd, False, f"Set setpoint failed: {error_name}", error=error_name)
+
+        except serial.SerialException as e:
+            error_msg = str(e)
+            if "device disconnected" in error_msg.lower():
+                with self._lock:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+                logger.warning("Device disconnected during set setpoint")
+                return SerialResult(cmd, False, "Device disconnected", error="Disconnected")
+            else:
+                logger.error(f"Serial error: {e}")
+                return SerialResult(cmd, False, "Communication error", error=str(e))
+
+        except Exception as e:
+            logger.error(f"Unexpected error setting setpoint: {e}", exc_info=True)
+            return SerialResult(cmd, False, "Unexpected error", error=str(e))
+
+    def _handle_set_p_gain(self, gain: float) -> SerialResult:
+        """Handle set P gain command in worker thread."""
+        cmd = SerialCommand.SET_P_GAIN
+        logger.info(f"SET_P_GAIN: gain={gain}")
+
+        try:
+            with self._lock:
+                if not self._serial_connection or not self._serial_connection.is_open:
+                    logger.warning("SET_P_GAIN: Not connected")
+                    return SerialResult(cmd, False, "Not connected", error="No connection")
+
+                # Validate gain range
+                if not (0.0 <= gain <= 10.0):
+                    logger.warning(f"SET_P_GAIN: Invalid gain {gain}")
+                    return SerialResult(cmd, False, "Invalid gain (0.0-10.0)", error="Invalid value")
+
+                # Build and send frame
+                frame = build_set_p_gain_frame(gain)
+                logger.info(f"SET_P_GAIN: sending frame: {frame.hex()}")
+
+                self._serial_connection.write(frame)
+                self._serial_connection.flush()
+
+            # Read response from response queue: 1 byte (ACK/NACK)
+            try:
+                resp_type = self._response_queue.get(timeout=2.0)
+            except queue.Empty:
+                logger.error("SET_P_GAIN: No response from device (timeout)")
+                return SerialResult(cmd, False, "Device not responding (timeout)", error="Timeout")
+
+            # If NACK, read error code byte
+            err_code = 0
+            if resp_type == RESP_NACK:
+                try:
+                    err_code = self._response_queue.get(timeout=1.0)
+                except queue.Empty:
+                    logger.warning("SET_P_GAIN: NACK received but no error code")
+
+            logger.info(f"SET_P_GAIN: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
+
+            if resp_type == RESP_ACK:
+                with self._lock:
+                    self._p_gain = gain
+                logger.info(f"SET_P_GAIN: ACK - Gain set to {gain}")
+                return SerialResult(cmd, True, f"P-Gain set to {gain:.2f}")
+            else:  # RESP_NACK
+                error_name = get_error_name(err_code)
+                logger.warning(f"SET_P_GAIN: NACK - {error_name}")
+                return SerialResult(cmd, False, f"Set gain failed: {error_name}", error=error_name)
+
+        except serial.SerialException as e:
+            error_msg = str(e)
+            if "device disconnected" in error_msg.lower():
+                with self._lock:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+                logger.warning("Device disconnected during set gain")
+                return SerialResult(cmd, False, "Device disconnected", error="Disconnected")
+            else:
+                logger.error(f"Serial error: {e}")
+                return SerialResult(cmd, False, "Communication error", error=str(e))
+
+        except Exception as e:
+            logger.error(f"Unexpected error setting gain: {e}", exc_info=True)
+            return SerialResult(cmd, False, "Unexpected error", error=str(e))
+
+    def _handle_set_p_feed_forward(self, ff: int) -> SerialResult:
+        """Handle set feed-forward command in worker thread."""
+        cmd = SerialCommand.SET_P_FEED_FORWARD
+        logger.info(f"SET_P_FEED_FORWARD: ff={ff}%")
+
+        try:
+            with self._lock:
+                if not self._serial_connection or not self._serial_connection.is_open:
+                    logger.warning("SET_P_FEED_FORWARD: Not connected")
+                    return SerialResult(cmd, False, "Not connected", error="No connection")
+
+                # Validate feed-forward range
+                if not (0 <= ff <= 100):
+                    logger.warning(f"SET_P_FEED_FORWARD: Invalid feed-forward {ff}")
+                    return SerialResult(cmd, False, "Invalid feed-forward (0-100)", error="Invalid value")
+
+                # Build and send frame
+                frame = build_set_feed_forward_frame(ff)
+                logger.info(f"SET_P_FEED_FORWARD: sending frame: {frame.hex()}")
+
+                self._serial_connection.write(frame)
+                self._serial_connection.flush()
+
+            # Read response from response queue: 1 byte (ACK/NACK)
+            try:
+                resp_type = self._response_queue.get(timeout=2.0)
+            except queue.Empty:
+                logger.error("SET_P_FEED_FORWARD: No response from device (timeout)")
+                return SerialResult(cmd, False, "Device not responding (timeout)", error="Timeout")
+
+            # If NACK, read error code byte
+            err_code = 0
+            if resp_type == RESP_NACK:
+                try:
+                    err_code = self._response_queue.get(timeout=1.0)
+                except queue.Empty:
+                    logger.warning("SET_P_FEED_FORWARD: NACK received but no error code")
+
+            logger.info(f"SET_P_FEED_FORWARD: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
+
+            if resp_type == RESP_ACK:
+                with self._lock:
+                    self._p_feed_forward = ff
+                logger.info(f"SET_P_FEED_FORWARD: ACK - Feed-forward set to {ff}%")
+                return SerialResult(cmd, True, f"Feed-forward set to {ff}%")
+            else:  # RESP_NACK
+                error_name = get_error_name(err_code)
+                logger.warning(f"SET_P_FEED_FORWARD: NACK - {error_name}")
+                return SerialResult(cmd, False, f"Set feed-forward failed: {error_name}", error=error_name)
+
+        except serial.SerialException as e:
+            error_msg = str(e)
+            if "device disconnected" in error_msg.lower():
+                with self._lock:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+                logger.warning("Device disconnected during set feed-forward")
+                return SerialResult(cmd, False, "Device disconnected", error="Disconnected")
+            else:
+                logger.error(f"Serial error: {e}")
+                return SerialResult(cmd, False, "Communication error", error=str(e))
+
+        except Exception as e:
+            logger.error(f"Unexpected error setting feed-forward: {e}", exc_info=True)
+            return SerialResult(cmd, False, "Unexpected error", error=str(e))
+
+    def _handle_start_p_stream(self, interval_ms: int) -> SerialResult:
+        """Handle start P-streaming command in worker thread."""
+        cmd = SerialCommand.START_P_STREAM
+        logger.info(f"START_P_STREAM: interval={interval_ms}ms")
+
+        try:
+            with self._lock:
+                if not self._serial_connection or not self._serial_connection.is_open:
+                    logger.warning("START_P_STREAM: Not connected")
+                    return SerialResult(cmd, False, "Not connected", error="No connection")
+
+                if self._p_streaming:
+                    logger.warning("START_P_STREAM: Already streaming")
+                    return SerialResult(cmd, False, "Already streaming", error="Already streaming")
+
+                # Validate interval range
+                if not (10 <= interval_ms <= 60000):
+                    logger.warning(f"START_P_STREAM: Invalid interval {interval_ms}")
+                    return SerialResult(cmd, False, "Invalid interval (10-60000ms)", error="Invalid value")
+
+                # Build and send stream start frame
+                frame = build_p_stream_start_frame(interval_ms)
+                logger.info(f"START_P_STREAM: sending frame: {frame.hex()}")
+
+                self._serial_connection.write(frame)
+                self._serial_connection.flush()
+
+            # Read response from response queue: 1 byte (ACK/NACK)
+            try:
+                resp_type = self._response_queue.get(timeout=2.0)
+            except queue.Empty:
+                logger.error("START_P_STREAM: No response from device (timeout)")
+                return SerialResult(cmd, False, "Device not responding (timeout)", error="Timeout")
+
+            # If NACK, read error code byte
+            err_code = 0
+            if resp_type == RESP_NACK:
+                try:
+                    err_code = self._response_queue.get(timeout=1.0)
+                except queue.Empty:
+                    logger.warning("START_P_STREAM: NACK received but no error code")
+
+            logger.info(f"START_P_STREAM: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
+
+            if resp_type == RESP_ACK:
+                with self._lock:
+                    self._p_streaming = True
+                logger.info(f"START_P_STREAM: ACK - P-streaming started at {interval_ms}ms interval")
+                return SerialResult(cmd, True, f"P-streaming started ({interval_ms}ms interval)")
+            else:  # RESP_NACK
+                error_name = get_error_name(err_code)
+                logger.warning(f"START_P_STREAM: NACK - {error_name}")
+                return SerialResult(cmd, False, f"Start failed: {error_name}", error=error_name)
+
+        except serial.SerialException as e:
+            error_msg = str(e)
+            if "device disconnected" in error_msg.lower():
+                with self._lock:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+                logger.warning("Device disconnected during P-stream start")
+                return SerialResult(cmd, False, "Device disconnected", error="Disconnected")
+            else:
+                logger.error(f"Serial error: {e}")
+                return SerialResult(cmd, False, "Communication error", error=str(e))
+
+        except Exception as e:
+            logger.error(f"Unexpected error starting P-stream: {e}", exc_info=True)
+            return SerialResult(cmd, False, "Unexpected error", error=str(e))
+
+    def _handle_stop_p_stream(self) -> SerialResult:
+        """Handle stop P-streaming command in worker thread."""
+        cmd = SerialCommand.STOP_P_STREAM
+        logger.info("STOP_P_STREAM: Stopping P-streaming")
+
+        try:
+            with self._lock:
+                if not self._serial_connection or not self._serial_connection.is_open:
+                    logger.warning("STOP_P_STREAM: Not connected")
+                    return SerialResult(cmd, False, "Not connected", error="No connection")
+
+                if not self._p_streaming:
+                    logger.warning("STOP_P_STREAM: Not streaming")
+                    return SerialResult(cmd, False, "Not streaming", error="Not streaming")
+
+                # Build and send stream stop frame
+                frame = build_p_stream_stop_frame()
+                logger.info(f"STOP_P_STREAM: sending frame: {frame.hex()}")
+
+                self._serial_connection.write(frame)
+                self._serial_connection.flush()
+
+            # Read response from response queue: 1 byte (ACK/NACK)
+            try:
+                resp_type = self._response_queue.get(timeout=2.0)
+            except queue.Empty:
+                logger.error("STOP_P_STREAM: No response from device (timeout)")
+                with self._lock:
+                    self._p_streaming = False
+                return SerialResult(cmd, False, "Device not responding (timeout)", error="Timeout")
+
+            # If NACK, read error code byte
+            err_code = 0
+            if resp_type == RESP_NACK:
+                try:
+                    err_code = self._response_queue.get(timeout=1.0)
+                except queue.Empty:
+                    logger.warning("STOP_P_STREAM: NACK received but no error code")
+
+            logger.info(f"STOP_P_STREAM: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
+
+            if resp_type == RESP_ACK:
+                with self._lock:
+                    self._p_streaming = False
+                logger.info("STOP_P_STREAM: ACK - P-streaming stopped")
+                return SerialResult(cmd, True, "P-streaming stopped")
+            else:  # RESP_NACK
+                error_name = get_error_name(err_code)
+                logger.warning(f"STOP_P_STREAM: NACK - {error_name}")
+                return SerialResult(cmd, False, f"Stop failed: {error_name}", error=error_name)
+
+        except serial.SerialException as e:
+            error_msg = str(e)
+            if "device disconnected" in error_msg.lower():
+                with self._lock:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+                    self._p_streaming = False
+                logger.warning("Device disconnected during P-stream stop")
+                return SerialResult(cmd, False, "Device disconnected", error="Disconnected")
+            else:
+                logger.error(f"Serial error: {e}")
+                return SerialResult(cmd, False, "Communication error", error=str(e))
+
+        except Exception as e:
+            logger.error(f"Unexpected error stopping P-stream: {e}", exc_info=True)
+            return SerialResult(cmd, False, "Unexpected error", error=str(e))
+
     # NOTE: Stream worker removed - only ONE thread can access serial!
     # Streaming data will be parsed in main worker loop when _is_streaming is True
 
@@ -876,6 +1389,11 @@ class LEDControllerApp:
         """Check if currently streaming ADC data."""
         with self._lock:
             return self._is_streaming
+
+    def is_p_streaming(self) -> bool:
+        """Check if currently P-streaming data."""
+        with self._lock:
+            return self._p_streaming
 
     def get_stream_interval(self) -> int:
         """Get current streaming interval in milliseconds."""

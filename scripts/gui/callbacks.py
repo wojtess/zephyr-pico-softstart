@@ -145,6 +145,10 @@ def on_connect_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
                     if dpg.does_item_exist(TAGS["stream_start_btn"]):
                         dpg.configure_item(TAGS["stream_start_btn"], enabled=True)
 
+                    # Enable P-stream start button
+                    if dpg.does_item_exist(TAGS["p_stream_start_btn"]):
+                        dpg.configure_item(TAGS["p_stream_start_btn"], enabled=True)
+
                     update_connection_indicator(True)
                     update_status(result.message, [100, 200, 100])
 
@@ -468,3 +472,279 @@ def on_frame_callback(sender, app_data, user_data: LEDControllerApp) -> None:
 
     # Update queue display
     update_queue_display(user_data)
+
+
+def on_p_mode_changed(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Handle mode switch (Manual <-> P-Control)."""
+    # app_data is the selected item name (string) from radio_button items
+    # Convert to mode value: 0=Manual, 1=P-Control
+    if app_data == "Manual":
+        mode = 0
+    elif app_data == "P-Control":
+        mode = 1
+    else:
+        logger.error(f"Invalid mode string: {app_data}")
+        return
+
+    logger.info(f"P-Mode changed to {app_data} ({mode})")
+
+    # Update UI - show/hide P-Control group
+    if dpg.does_item_exist(TAGS["p_control_group"]):
+        dpg.configure_item(TAGS["p_control_group"], show=(mode == 1))
+
+    # Send command to device
+    task = SerialTask(command=SerialCommand.SET_P_MODE, p_mode=mode)
+    result_queue = user_data.send_task(task)
+
+    # Check result in background thread
+    def check_mode():
+        try:
+            result = result_queue.get(timeout=2)
+
+            if result.success:
+                mode_name = "Manual" if mode == 0 else "P-Control"
+                update_status(f"Mode set to {mode_name}", [100, 200, 100])
+                update_last_response(f"ACK: {mode_name} mode")
+            else:
+                # Check if disconnected
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+
+                update_status(f"Mode error: {result.message}", [255, 100, 100])
+                update_last_response(f"NACK: {result.error or 'Unknown'}")
+                # Revert radio button
+                if dpg.does_item_exist(TAGS["p_mode_radio"]):
+                    dpg.set_value(TAGS["p_mode_radio"], 0)
+                if dpg.does_item_exist(TAGS["p_control_group"]):
+                    dpg.configure_item(TAGS["p_control_group"], show=False)
+
+        except queue.Empty:
+            update_status("Mode change timeout", [255, 150, 50])
+            update_last_response("Timeout")
+            # Revert radio button
+            if dpg.does_item_exist(TAGS["p_mode_radio"]):
+                dpg.set_value(TAGS["p_mode_radio"], 0)
+            if dpg.does_item_exist(TAGS["p_control_group"]):
+                dpg.configure_item(TAGS["p_control_group"], show=False)
+
+    threading.Thread(target=check_mode, daemon=True).start()
+
+
+def on_p_setpoint_changed(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Handle setpoint input change."""
+    setpoint = app_data  # app_data contains the new setpoint value
+    logger.info(f"P-Setpoint changed to {setpoint}")
+
+    # Send command to device
+    task = SerialTask(command=SerialCommand.SET_P_SETPOINT, p_setpoint=setpoint)
+    result_queue = user_data.send_task(task)
+
+    # Check result in background thread
+    def check_setpoint():
+        try:
+            result = result_queue.get(timeout=2)
+
+            if result.success:
+                update_status(f"Setpoint set to {setpoint}", [100, 200, 100])
+                update_last_response(f"ACK: SP={setpoint}")
+            else:
+                # Check if disconnected
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+
+                update_status(f"Setpoint error: {result.message}", [255, 100, 100])
+                update_last_response(f"NACK: {result.error or 'Unknown'}")
+
+        except queue.Empty:
+            update_status("Setpoint change timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_setpoint, daemon=True).start()
+
+
+def on_p_gain_changed(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Handle P-gain slider change."""
+    gain = app_data  # app_data contains the new gain value
+    logger.info(f"P-Gain changed to {gain:.2f}")
+
+    # Update label
+    if dpg.does_item_exist(TAGS["p_gain_label"]):
+        dpg.set_value(TAGS["p_gain_label"], f"{gain:.2f}")
+
+    # Send command to device
+    task = SerialTask(command=SerialCommand.SET_P_GAIN, p_gain=gain)
+    result_queue = user_data.send_task(task)
+
+    # Check result in background thread
+    def check_gain():
+        try:
+            result = result_queue.get(timeout=2)
+
+            if result.success:
+                update_status(f"P-Gain set to {gain:.2f}", [100, 200, 100])
+                update_last_response(f"ACK: Kp={gain:.2f}")
+            else:
+                # Check if disconnected
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+
+                update_status(f"Gain error: {result.message}", [255, 100, 100])
+                update_last_response(f"NACK: {result.error or 'Unknown'}")
+
+        except queue.Empty:
+            update_status("Gain change timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_gain, daemon=True).start()
+
+
+def on_p_ff_changed(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Handle feed-forward slider change."""
+    ff = app_data  # app_data contains the new feed-forward value
+    logger.info(f"Feed-forward changed to {ff}%")
+
+    # Update label
+    if dpg.does_item_exist(TAGS["p_ff_label"]):
+        dpg.set_value(TAGS["p_ff_label"], f"{ff}%")
+
+    # Send command to device
+    task = SerialTask(command=SerialCommand.SET_P_FEED_FORWARD, p_feed_forward=ff)
+    result_queue = user_data.send_task(task)
+
+    # Check result in background thread
+    def check_ff():
+        try:
+            result = result_queue.get(timeout=2)
+
+            if result.success:
+                update_status(f"Feed-forward set to {ff}%", [100, 200, 100])
+                update_last_response(f"ACK: FF={ff}%")
+            else:
+                # Check if disconnected
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+
+                update_status(f"Feed-forward error: {result.message}", [255, 100, 100])
+                update_last_response(f"NACK: {result.error or 'Unknown'}")
+
+        except queue.Empty:
+            update_status("Feed-forward change timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_ff, daemon=True).start()
+
+
+def on_p_stream_start_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Handle P-stream start button."""
+    # Get interval from input
+    interval_ms = 10  # default
+    if dpg.does_item_exist(TAGS["p_stream_interval"]):
+        interval_ms = dpg.get_value(TAGS["p_stream_interval"])
+
+    # Validate interval
+    if not (1 <= interval_ms <= 1000):
+        update_status("Invalid interval (1-1000ms)", [255, 100, 100])
+        return
+
+    # Disable start button
+    if dpg.does_item_exist(TAGS["p_stream_start_btn"]):
+        dpg.configure_item(TAGS["p_stream_start_btn"], enabled=False)
+
+    update_status(f"Starting P-stream ({interval_ms}ms)...", [200, 200, 100])
+    dpg.split_frame()
+
+    task = SerialTask(command=SerialCommand.START_P_STREAM, p_stream_interval=interval_ms)
+    result_queue = user_data.send_task(task)
+
+    # Check result in separate thread
+    def check_start():
+        try:
+            result = result_queue.get(timeout=2)
+
+            if result.success:
+                update_status(result.message, [100, 200, 100])
+                update_last_response("P-stream started")
+
+                # Update UI state
+                if dpg.does_item_exist(TAGS["p_stream_start_btn"]):
+                    dpg.configure_item(TAGS["p_stream_start_btn"], enabled=False)
+                if dpg.does_item_exist(TAGS["p_stream_stop_btn"]):
+                    dpg.configure_item(TAGS["p_stream_stop_btn"], enabled=True)
+                if dpg.does_item_exist(TAGS["p_stream_interval"]):
+                    dpg.configure_item(TAGS["p_stream_interval"], enabled=False)
+                if dpg.does_item_exist(TAGS["p_stream_status"]):
+                    dpg.set_value(TAGS["p_stream_status"], f"P-Stream: Active ({interval_ms}ms)")
+                    dpg.configure_item(TAGS["p_stream_status"], color=[100, 255, 100])
+
+            else:
+                # Re-enable start button on error
+                if dpg.does_item_exist(TAGS["p_stream_start_btn"]):
+                    dpg.configure_item(TAGS["p_stream_start_btn"], enabled=True)
+
+                # Check if disconnected
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+
+                update_status(f"P-stream start error: {result.message}", [255, 100, 100])
+                update_last_response(f"Error: {result.error or 'Unknown'}")
+
+        except queue.Empty:
+            if dpg.does_item_exist(TAGS["p_stream_start_btn"]):
+                dpg.configure_item(TAGS["p_stream_start_btn"], enabled=True)
+            update_status("P-stream start timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_start, daemon=True).start()
+
+
+def on_p_stream_stop_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Handle P-stream stop button."""
+    # Disable stop button
+    if dpg.does_item_exist(TAGS["p_stream_stop_btn"]):
+        dpg.configure_item(TAGS["p_stream_stop_btn"], enabled=False)
+
+    update_status("Stopping P-stream...", [200, 200, 100])
+    dpg.split_frame()
+
+    task = SerialTask(command=SerialCommand.STOP_P_STREAM)
+    result_queue = user_data.send_task(task)
+
+    # Check result in separate thread
+    def check_stop():
+        try:
+            result = result_queue.get(timeout=2)
+
+            # Re-enable stop button
+            if dpg.does_item_exist(TAGS["p_stream_stop_btn"]):
+                dpg.configure_item(TAGS["p_stream_stop_btn"], enabled=True)
+
+            if result.success:
+                update_status(result.message, [100, 200, 100])
+                update_last_response("P-stream stopped")
+
+                # Update UI state
+                if dpg.does_item_exist(TAGS["p_stream_start_btn"]):
+                    dpg.configure_item(TAGS["p_stream_start_btn"], enabled=True)
+                if dpg.does_item_exist(TAGS["p_stream_stop_btn"]):
+                    dpg.configure_item(TAGS["p_stream_stop_btn"], enabled=False)
+                if dpg.does_item_exist(TAGS["p_stream_interval"]):
+                    dpg.configure_item(TAGS["p_stream_interval"], enabled=True)
+                if dpg.does_item_exist(TAGS["p_stream_status"]):
+                    dpg.set_value(TAGS["p_stream_status"], "P-Stream: Stopped")
+                    dpg.configure_item(TAGS["p_stream_status"], color=[150, 150, 150])
+
+            else:
+                # Check if disconnected
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+
+                update_status(f"P-stream stop error: {result.message}", [255, 100, 100])
+                update_last_response(f"Error: {result.error or 'Unknown'}")
+
+        except queue.Empty:
+            if dpg.does_item_exist(TAGS["p_stream_stop_btn"]):
+                dpg.configure_item(TAGS["p_stream_stop_btn"], enabled=True)
+            update_status("P-stream stop timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_stop, daemon=True).start()
