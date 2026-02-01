@@ -67,6 +67,7 @@ class LEDControllerApp:
         self._serial_connection: Optional[serial.Serial] = None
         self._led_state: bool = False
         self._pwm_duty: int = 0  # 0-100%
+        self._last_known_pwm: int = 0  # Last actual PWM output (from any source)
         self._is_connected: bool = False
 
         # Worker thread
@@ -96,7 +97,9 @@ class LEDControllerApp:
         self._p_feed_forward: int = 0
         self._p_streaming: bool = False
 
-        # History for P-controller plot (deques)
+        # History for P-controller plot (deques) - SEPARATE from ADC stream!
+        self._p_time_history = deque(maxlen=self._adc_max_points)
+        self._p_measured_history = deque(maxlen=self._adc_max_points)
         self._setpoint_history = deque(maxlen=self._adc_max_points)
         self._pwm_history = deque(maxlen=self._adc_max_points)
         self._error_history = deque(maxlen=self._adc_max_points)
@@ -258,22 +261,22 @@ class LEDControllerApp:
                         pwm = p_pwm
                         error = setpoint - measured  # Calculate error
 
-                        # Add to history
+                        # Add to history - use SEPARATE buffers for P-stream!
                         with self._lock:
-                            self._adc_time_history.append(time.time())
-                            self._adc_raw_history.append(measured)
-                            self._adc_voltage_history.append((measured / 4095.0) * 3.3)
+                            self._p_time_history.append(time.time())
+                            self._p_measured_history.append(measured)
                             self._setpoint_history.append(setpoint)
                             self._pwm_history.append(pwm)
                             self._error_history.append(error)
+                            self._last_known_pwm = pwm  # Track actual PWM output
 
                             # Trim to max points
-                            if len(self._adc_time_history) > self._adc_max_points:
-                                self._adc_time_history.pop(0)
-                                self._adc_raw_history.pop(0)
-                                self._adc_voltage_history.pop(0)
+                            if len(self._p_time_history) > self._adc_max_points:
+                                self._p_time_history.pop(0)
+                                self._p_measured_history.pop(0)
                                 self._setpoint_history.pop(0)
                                 self._pwm_history.pop(0)
+                                self._error_history.pop(0)
 
                             # Record data if recording is active
                             if self._p_recording:
@@ -675,6 +678,7 @@ class LEDControllerApp:
             if resp_type == RESP_ACK:
                 with self._lock:
                     self._pwm_duty = duty
+                    self._last_known_pwm = duty  # Track actual PWM output
                     self._led_state = duty > 0
                 logger.info(f"SEND_PWM: ACK - PWM set to {duty}%")
                 return SerialResult(
@@ -1495,6 +1499,11 @@ class LEDControllerApp:
         with self._lock:
             return self._pwm_duty
 
+    def get_last_known_pwm(self) -> int:
+        """Get last known PWM output from any source (manual or P-stream)."""
+        with self._lock:
+            return self._last_known_pwm
+
     def is_streaming(self) -> bool:
         """Check if currently streaming ADC data."""
         with self._lock:
@@ -1584,6 +1593,19 @@ class LEDControllerApp:
             now = time.time()
             x_axis = [(t - now) for t in self._adc_time_history]
             return x_axis, list(self._adc_raw_history), list(self._adc_voltage_history)
+
+    def get_p_stream_history(self) -> tuple:
+        """Get P-stream history data with relative time from now for x-axis."""
+        with self._lock:
+            if not self._p_time_history:
+                return [], [], []
+
+            # Calculate relative time from now (seconds ago)
+            now = time.time()
+            x_axis = [(t - now) for t in self._p_time_history]
+            # Calculate voltage from measured raw values
+            voltage_series = [(m / 4095.0) * 3.3 for m in self._p_measured_history]
+            return x_axis, list(self._p_measured_history), voltage_series
 
     def get_pending_count(self) -> int:
         """Get number of tasks pending in queue."""

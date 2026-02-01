@@ -28,6 +28,41 @@
 #define ADC_RESOLUTION 12
 
 /* =========================================================================
+ * INTERNAL FUNCTIONS
+ * ========================================================================= */
+
+/**
+ * @brief Apply moving average filter to raw ADC value
+ *
+ * @details Updates ring buffer with new value and returns filtered average.
+ *          Uses power-of-2 window size for efficient modulo operation.
+ *
+ * @param ctx ADC reader context
+ * @param raw_value Raw ADC value (0-4095)
+ * @return Filtered ADC value
+ */
+static uint16_t adc_reader_apply_filter(struct adc_reader_ctx *ctx, uint16_t raw_value)
+{
+	/* Subtract oldest value from sum */
+	ctx->filter_sum -= ctx->filter_buffer[ctx->filter_index];
+
+	/* Add new value to buffer and sum */
+	ctx->filter_buffer[ctx->filter_index] = raw_value;
+	ctx->filter_sum += raw_value;
+
+	/* Move to next position (ring buffer) */
+	ctx->filter_index = (ctx->filter_index + 1) & ADC_FILTER_MASK;
+
+	/* Increment sample count (with cap at window size) */
+	if (ctx->filter_count < ADC_FILTER_WINDOW_SIZE) {
+		ctx->filter_count++;
+	}
+
+	/* Return average (divide by actual sample count during warm-up) */
+	return ctx->filter_sum / ctx->filter_count;
+}
+
+/* =========================================================================
  * FORWARD DECLARATIONS
  * ========================================================================= */
 
@@ -50,6 +85,28 @@ static void adc_reader_timer_expiry(struct k_timer *timer);
  * @param work Work item
  */
 static void adc_reader_work_handler(struct k_work *work);
+
+/* =========================================================================
+ * INTERNAL FUNCTIONS - IMPLEMENTATION
+ * ========================================================================= */
+
+/**
+ * @brief Reset filter state (clear buffer and counters)
+ *
+ * @details Clears the filter buffer and resets counters.
+ *          Should be called when starting or restarting acquisition.
+ *
+ * @param ctx ADC reader context
+ */
+static void adc_reader_reset_filter(struct adc_reader_ctx *ctx)
+{
+	ctx->filter_index = 0;
+	ctx->filter_sum = 0;
+	ctx->filter_count = 0;
+
+	/* Explicitly zero the filter buffer */
+	memset(ctx->filter_buffer, 0, sizeof(ctx->filter_buffer));
+}
 
 /* =========================================================================
  * WORK QUEUE HANDLER
@@ -94,8 +151,11 @@ static void adc_reader_work_handler(struct k_work *work)
 
 	adc_value = (uint16_t)sample_buffer;
 
-	/* Update shared value (atomic write) */
-	atomic_set(&ctx->last_adc_value, adc_value);
+	/* Apply moving average filter to remove PWM noise */
+	uint16_t filtered_value = adc_reader_apply_filter(ctx, adc_value);
+
+	/* Update shared value with FILTERED value (atomic write) */
+	atomic_set(&ctx->last_adc_value, filtered_value);
 	ctx->new_data_ready = true;
 }
 
@@ -135,7 +195,7 @@ static void adc_reader_timer_expiry(struct k_timer *timer)
  */
 int adc_reader_init(struct adc_reader_ctx *ctx,
 		    const struct device *adc_dev,
-		    uint32_t interval_ms)
+		    uint32_t interval_us)
 {
 	if (!ctx || !adc_dev) {
 		return -EINVAL;
@@ -146,8 +206,8 @@ int adc_reader_init(struct adc_reader_ctx *ctx,
 	}
 
 	/* Validate interval */
-	if (interval_ms < ADC_READER_MIN_INTERVAL_MS ||
-	    interval_ms > ADC_READER_MAX_INTERVAL_MS) {
+	if (interval_us < ADC_READER_MIN_INTERVAL_US ||
+	    interval_us > ADC_READER_MAX_INTERVAL_US) {
 		return -EINVAL;
 	}
 
@@ -156,13 +216,16 @@ int adc_reader_init(struct adc_reader_ctx *ctx,
 
 	/* Set up context */
 	ctx->adc_dev = adc_dev;
-	ctx->interval_ms = interval_ms;
+	ctx->interval_us = interval_us;
 	ctx->active = false;
 	ctx->new_data_ready = false;
 	ctx->initialized = false;
 
 	/* Initialize atomic value */
 	atomic_set(&ctx->last_adc_value, 0);
+
+	/* Initialize filter state (explicitly zero buffer) */
+	adc_reader_reset_filter(ctx);
 
 	/* Initialize timer with user data */
 	k_timer_init(&ctx->timer, adc_reader_timer_expiry, NULL);
@@ -189,13 +252,16 @@ int adc_reader_start(struct adc_reader_ctx *ctx)
 		return 0;
 	}
 
+	/* Reset filter state for clean start */
+	adc_reader_reset_filter(ctx);
+
 	/* Start periodic timer
 	 * Note: k_timer_start() returns void in Zephyr, so we can't check for errors
 	 * The active flag is set optimistically - if timer fails, no work will be submitted
 	 */
 	k_timer_start(&ctx->timer,
-		      K_MSEC(ctx->interval_ms),
-		      K_MSEC(ctx->interval_ms));
+		      K_USEC(ctx->interval_us),
+		      K_USEC(ctx->interval_us));
 
 	ctx->active = true;
 
@@ -279,21 +345,21 @@ uint32_t adc_reader_get_interval(const struct adc_reader_ctx *ctx)
 		return 0;
 	}
 
-	return ctx->interval_ms;
+	return ctx->interval_us;
 }
 
 /**
  * @brief Update read interval
  */
-int adc_reader_set_interval(struct adc_reader_ctx *ctx, uint32_t interval_ms)
+int adc_reader_set_interval(struct adc_reader_ctx *ctx, uint32_t interval_us)
 {
 	if (!ctx || !ctx->initialized) {
 		return -EINVAL;
 	}
 
 	/* Validate interval */
-	if (interval_ms < ADC_READER_MIN_INTERVAL_MS ||
-	    interval_ms > ADC_READER_MAX_INTERVAL_MS) {
+	if (interval_us < ADC_READER_MIN_INTERVAL_US ||
+	    interval_us > ADC_READER_MAX_INTERVAL_US) {
 		return -EINVAL;
 	}
 
@@ -305,13 +371,17 @@ int adc_reader_set_interval(struct adc_reader_ctx *ctx, uint32_t interval_ms)
 	}
 
 	/* Update interval */
-	ctx->interval_ms = interval_ms;
+	ctx->interval_us = interval_us;
+
+	/* Reset filter state when changing interval
+	 * (different sampling rate = different filter characteristics) */
+	adc_reader_reset_filter(ctx);
 
 	/* Restart if was running */
 	if (was_active) {
 		k_timer_start(&ctx->timer,
-			      K_MSEC(ctx->interval_ms),
-			      K_MSEC(ctx->interval_ms));
+			      K_USEC(ctx->interval_us),
+			      K_USEC(ctx->interval_us));
 	}
 
 	return 0;
