@@ -351,6 +351,22 @@ static void filter_alpha_set_cb(uint8_t num, uint8_t den)
 	adc_reader_set_alpha(&g_adc_reader, num, den);
 }
 
+/**
+ * @brief Set ADC filter mode callback for protocol module
+ *
+ * @details Called when SET_FILTER_MODE command is received.
+ *          Mode: 0=IIR only, 1=Oversample only, 2=Oversample+IIR
+ *
+ * @param mode Filter mode (0-2)
+ */
+static void filter_mode_set_cb(uint8_t mode)
+{
+	int ret = adc_reader_set_filter_mode(&g_adc_reader, mode);
+	if (ret != 0) {
+		printk("Failed to set filter mode: %d\n", ret);
+	}
+}
+
 /* =========================================================================
  * UART INTERRUPT HANDLERS
  * ========================================================================= */
@@ -518,6 +534,7 @@ int main(void)
 	g_proto.on_stop_p_stream = p_ctrl_stop_stream_cb;
 	g_proto.on_get_p_status = p_ctrl_get_status_cb;
 	g_proto.on_filter_alpha_set = filter_alpha_set_cb;
+	g_proto.on_filter_mode_set = filter_mode_set_cb;
 	/* Response callbacks */
 	g_proto.send_resp = send_response_cb;
 	g_proto.send_adc_resp = send_adc_response_cb;

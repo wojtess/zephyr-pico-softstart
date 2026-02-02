@@ -73,6 +73,7 @@ void proto_init(struct proto_ctx *ctx)
 	ctx->on_stop_p_stream = NULL;
 	ctx->on_get_p_status = NULL;
 	ctx->on_filter_alpha_set = NULL;
+	ctx->on_filter_mode_set = NULL;
 	ctx->send_resp = NULL;
 	ctx->send_adc_resp = NULL;
 	ctx->send_debug = NULL;
@@ -155,6 +156,10 @@ void proto_process_byte(struct proto_ctx *ctx, uint8_t byte)
 			ctx->frame_buf[0] = byte;
 			ctx->state = PROTO_STATE_WAIT_FILTER_ALPHA_NUM;
 		}
+		else if (byte == PROTO_CMD_SET_FILTER_MODE) {
+			ctx->frame_buf[0] = byte;
+			ctx->state = PROTO_STATE_WAIT_VALUE;
+		}
 		else {
 			/* Unknown command - reset state to WAIT_CMD */
 			ctx->state = PROTO_STATE_WAIT_CMD;
@@ -236,6 +241,22 @@ void proto_process_byte(struct proto_ctx *ctx, uint8_t byte)
 			} else {
 				if (ctx->on_set_feed_forward) {
 					ctx->on_set_feed_forward(ctx->frame_buf[1]);
+				}
+				if (ctx->send_resp) {
+					ctx->send_resp(PROTO_RESP_ACK);
+				}
+			}
+		}
+		else if (ctx->frame_buf[0] == PROTO_CMD_SET_FILTER_MODE) {
+			/* Validate filter mode (0=IIR, 1=OS, 2=OS+IIR) */
+			if (ctx->frame_buf[1] > 2) {
+				if (ctx->send_resp) {
+					ctx->send_resp(PROTO_RESP_NACK);
+					ctx->send_resp(PROTO_ERR_INVALID_VAL);
+				}
+			} else {
+				if (ctx->on_filter_mode_set) {
+					ctx->on_filter_mode_set(ctx->frame_buf[1]);
 				}
 				if (ctx->send_resp) {
 					ctx->send_resp(PROTO_RESP_ACK);

@@ -62,6 +62,9 @@
 /** @brief Command byte for set IIR filter alpha (numerator/denominator) */
 #define PROTO_CMD_SET_FILTER_ALPHA   0x0E
 
+/** @brief Command byte for set ADC filter mode (0=IIR, 1=OS, 2=OS+IIR) */
+#define PROTO_CMD_SET_FILTER_MODE    0x0F
+
 /** @brief Response marker for P-stream data (reuses CMD_START_P_STREAM as marker) */
 #define PROTO_RESP_P_STREAM          PROTO_CMD_START_P_STREAM
 
@@ -134,6 +137,7 @@ enum proto_state {
 	PROTO_STATE_WAIT_FILTER_ALPHA_NUM,     /**< Waiting for filter alpha numerator */
 	PROTO_STATE_WAIT_FILTER_ALPHA_DEN,     /**< Waiting for filter alpha denominator */
 	PROTO_STATE_WAIT_FILTER_ALPHA_CRC,     /**< Waiting for CRC byte (SET_FILTER_ALPHA) */
+	PROTO_STATE_WAIT_FILTER_MODE_CRC,      /**< Waiting for CRC byte (SET_FILTER_MODE) */
 	PROTO_STATE_WAIT_P_STREAM_RATE_H,      /**< Waiting for stream rate high byte */
 	PROTO_STATE_WAIT_P_STREAM_RATE_L,      /**< Waiting for stream rate low byte */
 	PROTO_STATE_WAIT_P_STREAM_CRC,         /**< Waiting for CRC byte (START_P_STREAM) */
@@ -251,6 +255,13 @@ typedef int (*proto_get_p_status_cb)(void);
  */
 typedef void (*proto_filter_alpha_cb)(uint8_t num, uint8_t den);
 
+/**
+ * @brief Callback type for set ADC filter mode
+ *
+ * @param mode Filter mode (0=IIR only, 1=OS only, 2=OS+IIR)
+ */
+typedef void (*proto_filter_mode_cb)(uint8_t mode);
+
 /* =========================================================================
  * GENERAL CALLBACK TYPES
  * ========================================================================= */
@@ -338,6 +349,9 @@ struct proto_ctx {
 
 	/** Callback: Set IIR filter alpha */
 	proto_filter_alpha_cb on_filter_alpha_set;
+
+	/** Callback: Set ADC filter mode */
+	proto_filter_mode_cb on_filter_mode_set;
 
 	/** Callback: Send response byte */
 	proto_send_resp_cb send_resp;

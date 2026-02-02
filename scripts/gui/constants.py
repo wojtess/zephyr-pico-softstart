@@ -27,6 +27,7 @@ class SerialCommand(Enum):
     STOP_P_STREAM = "stop_p_stream"
     GET_P_STATUS = "get_p_status"
     SET_FILTER_ALPHA = "set_filter_alpha"
+    SET_FILTER_MODE = "set_filter_mode"
     START_P_RECORD = "start_p_record"
     STOP_P_RECORD = "stop_p_record"
     QUIT = "quit"
@@ -50,6 +51,7 @@ class SerialTask:
     p_stream_interval: Optional[int] = None  # For P-streaming (milliseconds)
     filter_alpha_num: Optional[int] = None  # Filter alpha numerator (1-255)
     filter_alpha_den: Optional[int] = None  # Filter alpha denominator (1-255)
+    filter_mode: Optional[int] = None  # Filter mode (0=IIR, 1=OS, 2=OS+IIR)
 
 
 @dataclass
@@ -149,6 +151,10 @@ TAGS = {
     "filter_alpha_input": "input_filter_alpha",
     "filter_alpha_label": "txt_filter_alpha",
     "filter_alpha_info": "txt_filter_alpha_info",
+    # Filter mode controls
+    "filter_mode_combo": "combo_filter_mode",
+    "filter_mode_label": "txt_filter_mode",
+    "filter_oversample_info": "txt_filter_oversample_info",
     # Autotune UI elements
     "autotune_status": "txt_autotune_status",
     "autotune_progress": "prog_autotune",

@@ -31,6 +31,9 @@ extern "C" {
 /** @brief Minimum ADC read interval (µs) - 10kHz for safety */
 #define ADC_READER_MIN_INTERVAL_US     10
 
+/** @brief Oversampling count for averaging (must be power of 2: 8, 16, 32, 64) */
+#define ADC_OVERSAMPLE_COUNT      64
+
 /** @brief IIR LPF alpha coefficient (fixed-point: 1/256 for ~12Hz cutoff at 20kHz)
  *
  * @details α (alpha) determines filter response speed:
@@ -45,6 +48,20 @@ extern "C" {
 #define ADC_IIR_ALPHA_NUMERATOR   1
 #define ADC_IIR_ALPHA_DENOMINATOR 255  /* Max uint8_t value */
 #define ADC_IIR_ALPHA_SHIFT       8     /* log2(256) - actual denominator is 256 */
+
+/**
+ * @brief ADC filter mode enumeration
+ *
+ * @details Defines the available filtering modes for ADC input:
+ *          - IIR_ONLY: Single sample + IIR low-pass filter (current behavior)
+ *          - OVERSAMPLE_ONLY: 16x oversampling + averaging, no IIR
+ *          - OVERSAMPLE_IIR: 16x oversampling + averaging + IIR filter
+ */
+enum adc_filter_mode {
+	ADC_FILTER_MODE_IIR_ONLY = 0,          /**< IIR filter only (default) */
+	ADC_FILTER_MODE_OVERSAMPLE_ONLY = 1,   /**< 16x oversample, no IIR */
+	ADC_FILTER_MODE_OVERSAMPLE_IIR = 2     /**< 16x oversample + IIR */
+};
 
 /* =========================================================================
  * CONTEXT STRUCTURE
@@ -92,6 +109,9 @@ struct adc_reader_ctx {
 
 	/** Bit shift amount for power-of-2 denominator (0 if not power of 2) */
 	uint8_t alpha_shift;
+
+	/** Current filter mode (0=IIR only, 1=OS only, 2=OS+IIR) */
+	uint8_t filter_mode;
 };
 
 /* =========================================================================
@@ -213,6 +233,31 @@ int adc_reader_set_interval(struct adc_reader_ctx *ctx, uint32_t interval_us);
  * @return 0 on success, negative errno on failure
  */
 int adc_reader_set_alpha(struct adc_reader_ctx *ctx, uint8_t numerator, uint8_t denominator);
+
+/**
+ * @brief Set ADC filter mode
+ *
+ * @details Sets the ADC input filtering mode:
+ *          - Mode 0 (IIR_ONLY): Single sample + IIR low-pass filter
+ *          - Mode 1 (OVERSAMPLE_ONLY): 16x oversampling + averaging
+ *          - Mode 2 (OVERSAMPLE_IIR): 16x oversampling + IIR filter
+ *
+ *          When changing mode, the ADC reader is temporarily stopped
+ *          and filter state is reset for clean transition.
+ *
+ * @param ctx ADC reader context
+ * @param mode Filter mode (0=IIR only, 1=OS only, 2=OS+IIR)
+ * @return 0 on success, negative errno on failure
+ */
+int adc_reader_set_filter_mode(struct adc_reader_ctx *ctx, uint8_t mode);
+
+/**
+ * @brief Get current ADC filter mode
+ *
+ * @param ctx ADC reader context
+ * @return Filter mode (0=IIR only, 1=OS only, 2=OS+IIR), or -1 if not initialized
+ */
+int adc_reader_get_filter_mode(struct adc_reader_ctx *ctx);
 
 #ifdef __cplusplus
 }

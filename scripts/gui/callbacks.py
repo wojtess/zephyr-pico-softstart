@@ -1126,6 +1126,64 @@ def on_filter_alpha_changed(sender, app_data, user_data: LEDControllerApp) -> No
     threading.Thread(target=check_alpha, daemon=True).start()
 
 
+def on_filter_mode_changed(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Handle filter mode combo box change."""
+    mode_str = app_data  # "IIR Only", "Oversample Only", "Oversample+IIR"
+
+    # Map string to mode number
+    mode_map = {
+        "IIR Only": 0,
+        "Oversample Only": 1,
+        "Oversample+IIR": 2,
+    }
+    mode_num = mode_map.get(mode_str, 0)
+
+    logger.info(f"Filter mode changed to {mode_str} ({mode_num})")
+
+    # Update mode label
+    if dpg.does_item_exist(TAGS["filter_mode_label"]):
+        dpg.set_value(TAGS["filter_mode_label"], f"Mode: {mode_str}")
+
+    # Show/hide alpha slider based on mode
+    show_alpha = (mode_num in [0, 2])  # IIR used in modes 0 and 2
+    if dpg.does_item_exist(TAGS["filter_alpha_input"]):
+        dpg.configure_item(TAGS["filter_alpha_input"], enabled=show_alpha)
+
+    # Update oversample info
+    if dpg.does_item_exist(TAGS["filter_oversample_info"]):
+        if mode_num in [1, 2]:
+            dpg.set_value(TAGS["filter_oversample_info"],
+                         "Oversample: 64x (15-bit effective)")
+            dpg.show_item(TAGS["filter_oversample_info"])
+        else:
+            dpg.hide_item(TAGS["filter_oversample_info"])
+
+    # Send command to device
+    task = SerialTask(command=SerialCommand.SET_FILTER_MODE, filter_mode=mode_num)
+    result_queue = user_data.send_task(task)
+
+    # Check result in background thread
+    def check_mode():
+        try:
+            result = result_queue.get(timeout=2)
+            if result.success:
+                update_status(f"Filter mode set to {mode_str}", [100, 200, 100])
+                update_last_response(f"ACK: Filter mode={mode_num}")
+            else:
+                if result.error in ["Disconnected", "Timeout"]:
+                    handle_disconnect_state(user_data)
+                update_status(f"Filter mode error: {result.message}", [255, 100, 100])
+                update_last_response(f"NACK: {result.error or 'Unknown'}")
+                # Revert combo box
+                if dpg.does_item_exist(sender):
+                    dpg.set_value(sender, "IIR Only")
+        except queue.Empty:
+            update_status("Filter mode timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_mode, daemon=True).start()
+
+
 def on_autotune_start(sender, app_data, user_data: LEDControllerApp) -> None:
     """Handle autotune start button click."""
     logger.info("Autotune start button clicked")
