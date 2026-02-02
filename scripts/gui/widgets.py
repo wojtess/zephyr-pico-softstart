@@ -21,6 +21,8 @@ from .callbacks import (
     on_p_setpoint_changed,
     on_p_gain_changed,
     on_p_gain_input_changed,
+    on_p_ki_changed,
+    on_p_ki_input_changed,
     on_p_ff_changed,
     on_p_ff_input_changed,
     on_p_stream_enable_changed,
@@ -138,6 +140,14 @@ def create_main_window(app: LEDControllerApp) -> None:
                 dpg.add_text("Gain:")
                 dpg.add_input_float(tag=TAGS["p_gain_input"], default_value=1.0, min_value=0.0, max_value=10.0, width=-1, format="%.2f", callback=on_p_gain_input_changed, user_data=app)
                 dpg.add_slider_float(tag=TAGS["p_gain_slider"], default_value=1.0, min_value=0.0, max_value=10.0, clamped=True, width=-1, callback=on_p_gain_changed, user_data=app)
+                dpg.add_text(tag=TAGS["p_gain_label"], default_value="1.00")
+
+                dpg.add_spacer(height=3)
+
+                dpg.add_text("Ki:")
+                dpg.add_input_float(tag=TAGS["p_ki_input"], default_value=0.0, min_value=0.0, max_value=10.0, width=-1, format="%.2f", callback=on_p_ki_input_changed, user_data=app)
+                dpg.add_slider_float(tag=TAGS["p_ki_slider"], default_value=0.0, min_value=0.0, max_value=10.0, clamped=True, width=-1, callback=on_p_ki_changed, user_data=app)
+                dpg.add_text(tag=TAGS["p_ki_label"], default_value="0.00")
 
                 dpg.add_spacer(height=3)
 

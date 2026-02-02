@@ -21,6 +21,7 @@ class SerialCommand(Enum):
     SET_P_MODE = "set_p_mode"
     SET_P_SETPOINT = "set_p_setpoint"
     SET_P_GAIN = "set_p_gain"
+    SET_P_KI = "set_p_ki"
     SET_P_FEED_FORWARD = "set_p_feed_forward"
     START_P_STREAM = "start_p_stream"
     STOP_P_STREAM = "stop_p_stream"
@@ -43,6 +44,7 @@ class SerialTask:
     p_mode: Optional[int] = None
     p_setpoint: Optional[int] = None
     p_gain: Optional[float] = None
+    p_ki: Optional[float] = None
     p_feed_forward: Optional[int] = None
     p_stream_interval: Optional[int] = None  # For P-streaming (milliseconds)
 
@@ -89,7 +91,7 @@ TAGS = {
     "queue_label": "txt_queue_label",
     "queue_count": "txt_queue_count",
     "queue_processing": "txt_queue_processing",
-    # P-Controller mode and controls
+    # PI-Controller mode and controls
     "p_mode_radio": "radio_p_mode",
     "p_mode_radio_p": "radio_p_mode_p",
     "p_control_group": "group_p_control",
@@ -102,11 +104,14 @@ TAGS = {
     "p_gain_slider": "slider_p_gain",
     "p_gain_input": "input_p_gain",
     "p_gain_label": "txt_p_gain",
+    "p_ki_slider": "slider_p_ki",
+    "p_ki_input": "input_p_ki",
+    "p_ki_label": "txt_p_ki",
     "p_ff_slider": "slider_p_ff",
     "p_ff_input": "input_p_ff",
     "p_ff_label": "txt_p_ff",
     "p_pwm_output": "txt_p_pwm",
-    # P-Controller streaming
+    # PI-Controller streaming
     "p_stream_start_btn": "btn_p_stream_start",
     "p_stream_stop_btn": "btn_p_stream_stop",
     "p_stream_interval": "input_p_stream_interval",
@@ -120,11 +125,11 @@ TAGS = {
     "p_series_measured": "p_series_measured",
     "p_series_pwm": "p_series_pwm",
     "p_series_error": "p_series_error",
-    # P-Controller recording
+    # PI-Controller recording
     "p_record_start_btn": "btn_p_record_start",
     "p_record_stop_btn": "btn_p_record_stop",
     "p_record_status": "txt_p_record_status",
-    # P-Controller analysis
+    # PI-Controller analysis
     "p_analyze_btn": "btn_p_analyze",
     "p_analysis_window": "win_p_analysis",
     "p_analysis_plot": "plot_p_analysis",
@@ -139,7 +144,7 @@ TAGS = {
     "p_analysis_derived_metrics": "txt_p_analysis_derived_metrics"
 }
 
-# P-Controller mode values (must match radio button items)
+# PI-Controller mode values (must match radio button items)
 P_MODE_MANUAL = "M"
 P_MODE_AUTO = "P"
 

@@ -1,12 +1,13 @@
 /**
  * @file p_controller.h
- * @brief P-controller for current regulation
+ * @brief PI-controller for current regulation
  *
- * Formula: PWM = feed_forward + (Kp * (setpoint - measured)) / 100
+ * Formula: PWM = feed_forward + (Kp * error) / 100 + (Ki * integral) / 100
  *
- * The P-controller operates at 1 kHz (1ms interval) and supports two modes:
+ * The PI-controller operates at 1 kHz (1ms interval) and supports two modes:
  * - MANUAL: PWM is controlled directly via SET_PWM command
- * - AUTO: P-controller calculates PWM automatically based on ADC feedback
+ * - AUTO: PI-controller calculates PWM automatically based on ADC feedback
+ * - Anti-windup: integral sum is clamped and back-calculated on output saturation
  */
 
 #pragma once
@@ -21,28 +22,33 @@ struct adc_reader_ctx;
 extern "C" {
 #endif
 
-/** @brief P-controller operation modes */
+/** @brief PI-controller operation modes */
 #define P_CTRL_MODE_MANUAL     0  /**< Manual PWM control */
-#define P_CTRL_MODE_AUTO       1  /**< Automatic P-control */
+#define P_CTRL_MODE_AUTO       1  /**< Automatic PI-control */
 
-/** @brief P-controller parameter ranges */
+/** @brief PI-controller parameter ranges */
 #define P_CTRL_SETPOINT_MIN   0     /**< Minimum setpoint (ADC) */
 #define P_CTRL_SETPOINT_MAX   4095  /**< Maximum setpoint (ADC) */
-#define P_CTRL_GAIN_MIN       0     /**< Minimum gain */
-#define P_CTRL_GAIN_MAX       1000  /**< Maximum gain (represents 10.0) */
+#define P_CTRL_GAIN_MIN       0     /**< Minimum proportional gain (Kp) */
+#define P_CTRL_GAIN_MAX       1000  /**< Maximum proportional gain (Kp, represents 10.0) */
+#define P_CTRL_KI_MIN         0     /**< Minimum integral gain (Ki) */
+#define P_CTRL_KI_MAX         1000  /**< Maximum integral gain (Ki, represents 10.0) */
 #define P_CTRL_FF_MIN         0     /**< Minimum feed-forward */
 #define P_CTRL_FF_MAX         100   /**< Maximum feed-forward (PWM %) */
 #define P_CTRL_PWM_MIN        0     /**< Minimum PWM output */
 #define P_CTRL_PWM_MAX        100   /**< Maximum PWM output */
+
+/** @brief Anti-windup limits for integral term */
+#define P_CTRL_INTEGRAL_LIMIT 100000 /**< Maximum absolute integral sum */
 
 /** @brief Streaming configuration */
 #define P_CTRL_STREAM_HZ_DEFAULT  100  /**< Default streaming rate (Hz) */
 #define P_CTRL_CONTROL_HZ         1000 /**< Control loop frequency (Hz) */
 
 /**
- * @brief P-controller context structure
+ * @brief PI-controller context structure
  *
- * Contains all state, parameters, and callbacks for the P-controller.
+ * Contains all state, parameters, and callbacks for the PI-controller.
  */
 struct p_ctrl_ctx {
     /** @brief Timer for 1kHz control loop */
@@ -59,6 +65,12 @@ struct p_ctrl_ctx {
 
     /** @brief Proportional gain (atomic access required) */
     atomic_t gain;
+
+    /** @brief Integral gain (atomic access required) */
+    atomic_t ki;
+
+    /** @brief Integral sum (non-atomic, work queue only) */
+    int32_t integral_sum;
 
     /** @brief Base PWM bias (atomic access required) */
     atomic_t feed_forward;
@@ -92,17 +104,17 @@ struct p_ctrl_ctx {
 };
 
 /**
- * @brief Initialize P-controller
+ * @brief Initialize PI-controller
  *
- * @param ctx Pointer to P-controller context
+ * @param ctx Pointer to PI-controller context
  * @return 0 on success, negative errno on failure
  */
 int p_ctrl_init(struct p_ctrl_ctx *ctx);
 
 /**
- * @brief Set P-controller operation mode
+ * @brief Set PI-controller operation mode
  *
- * @param ctx Pointer to P-controller context
+ * @param ctx Pointer to PI-controller context
  * @param mode P_CTRL_MODE_MANUAL or P_CTRL_MODE_AUTO
  */
 void p_ctrl_set_mode(struct p_ctrl_ctx *ctx, uint8_t mode);
@@ -110,7 +122,7 @@ void p_ctrl_set_mode(struct p_ctrl_ctx *ctx, uint8_t mode);
 /**
  * @brief Set target ADC value (setpoint)
  *
- * @param ctx Pointer to P-controller context
+ * @param ctx Pointer to PI-controller context
  * @param setpoint Target value (0-4095)
  */
 void p_ctrl_set_setpoint(struct p_ctrl_ctx *ctx, uint16_t setpoint);
@@ -118,15 +130,30 @@ void p_ctrl_set_setpoint(struct p_ctrl_ctx *ctx, uint16_t setpoint);
 /**
  * @brief Set proportional gain
  *
- * @param ctx Pointer to P-controller context
- * @param gain Gain value (0-1000, represents 0.0-10.0)
+ * @param ctx Pointer to PI-controller context
+ * @param gain Proportional gain value (0-1000, represents 0.0-10.0)
  */
 void p_ctrl_set_gain(struct p_ctrl_ctx *ctx, uint16_t gain);
 
 /**
+ * @brief Set integral gain
+ *
+ * @param ctx Pointer to PI-controller context
+ * @param ki Integral gain value (0-1000, represents 0.0-10.0)
+ */
+void p_ctrl_set_ki(struct p_ctrl_ctx *ctx, uint16_t ki);
+
+/**
+ * @brief Reset integral sum (anti-windup reset)
+ *
+ * @param ctx Pointer to PI-controller context
+ */
+void p_ctrl_reset_integral(struct p_ctrl_ctx *ctx);
+
+/**
  * @brief Set feed-forward value
  *
- * @param ctx Pointer to P-controller context
+ * @param ctx Pointer to PI-controller context
  * @param ff Feed-forward PWM (0-100)
  */
 void p_ctrl_set_feed_forward(struct p_ctrl_ctx *ctx, uint8_t ff);
@@ -134,7 +161,7 @@ void p_ctrl_set_feed_forward(struct p_ctrl_ctx *ctx, uint8_t ff);
 /**
  * @brief Register callbacks for PWM and streaming
  *
- * @param ctx Pointer to P-controller context
+ * @param ctx Pointer to PI-controller context
  * @param pwm_set Callback to set PWM duty cycle
  * @param stream_data Callback to send streaming data
  */
@@ -145,7 +172,7 @@ void p_ctrl_set_callbacks(struct p_ctrl_ctx *ctx,
 /**
  * @brief Set ADC reader reference
  *
- * @param ctx Pointer to P-controller context
+ * @param ctx Pointer to PI-controller context
  * @param adc_reader Pointer to ADC reader context
  */
 void p_ctrl_set_adc_reader(struct p_ctrl_ctx *ctx, struct adc_reader_ctx *adc_reader);
@@ -153,7 +180,7 @@ void p_ctrl_set_adc_reader(struct p_ctrl_ctx *ctx, struct adc_reader_ctx *adc_re
 /**
  * @brief Start streaming control data
  *
- * @param ctx Pointer to P-controller context
+ * @param ctx Pointer to PI-controller context
  * @param rate_hz Streaming rate in Hz (max 1000)
  * @return 0 on success, negative errno on failure
  */
@@ -162,7 +189,7 @@ int p_ctrl_start_stream(struct p_ctrl_ctx *ctx, uint32_t rate_hz);
 /**
  * @brief Stop streaming control data
  *
- * @param ctx Pointer to P-controller context
+ * @param ctx Pointer to PI-controller context
  * @return 0 on success, negative errno on failure
  */
 int p_ctrl_stop_stream(struct p_ctrl_ctx *ctx);
@@ -170,7 +197,7 @@ int p_ctrl_stop_stream(struct p_ctrl_ctx *ctx);
 /**
  * @brief Get current PWM output
  *
- * @param ctx Pointer to P-controller context
+ * @param ctx Pointer to PI-controller context
  * @return Current PWM duty cycle (0-100)
  */
 uint8_t p_ctrl_get_pwm(struct p_ctrl_ctx *ctx);
@@ -178,7 +205,7 @@ uint8_t p_ctrl_get_pwm(struct p_ctrl_ctx *ctx);
 /**
  * @brief Get last measured ADC value
  *
- * @param ctx Pointer to P-controller context
+ * @param ctx Pointer to PI-controller context
  * @return Last ADC reading
  */
 uint16_t p_ctrl_get_measured(struct p_ctrl_ctx *ctx);

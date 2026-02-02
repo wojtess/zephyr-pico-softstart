@@ -1,10 +1,11 @@
 /**
  * @file p_controller.c
- * @brief P-controller implementation for current regulation
+ * @brief PI-controller implementation for current regulation
  *
- * Formula: PWM = feed_forward + (Kp * (setpoint - measured)) / 100
+ * Formula: PWM = feed_forward + (Kp * error) / 100 + (Ki * integral) / 100
  *
  * Control loop runs at 1 kHz (1ms interval) using Zephyr timer + work queue.
+ * Anti-windup: integral sum is clamped and back-calculated on output saturation.
  */
 
 #include "p_controller.h"
@@ -19,10 +20,10 @@ LOG_MODULE_REGISTER(p_controller, LOG_LEVEL_INF);
 #define CONTROL_INTERVAL_US  K_USEC(1000)  /* 1ms = 1kHz control loop */
 
 /**
- * @brief Work queue handler for P-control calculation
+ * @brief Work queue handler for PI-control calculation
  *
  * Called from system work queue context (not interrupt context).
- * Performs the actual P-control calculation and PWM output.
+ * Performs the actual PI-control calculation and PWM output.
  */
 static void p_ctrl_work_handler(struct k_work *work)
 {
@@ -32,13 +33,14 @@ static void p_ctrl_work_handler(struct k_work *work)
     uint8_t mode = atomic_get(&ctx->mode);
     uint16_t setpoint = atomic_get(&ctx->setpoint);
     uint16_t gain = atomic_get(&ctx->gain);
+    uint16_t ki = atomic_get(&ctx->ki);
     uint8_t feed_forward = atomic_get(&ctx->feed_forward);
 
     uint8_t pwm_output = 0;
     uint16_t measured = 0;
 
     if (mode == P_CTRL_MODE_AUTO) {
-        /* AUTO mode: Calculate P-control */
+        /* AUTO mode: Calculate PI-control */
         if (ctx->adc_reader != NULL && adc_reader_is_active(ctx->adc_reader)) {
             measured = adc_reader_get_last(ctx->adc_reader);
 
@@ -52,26 +54,61 @@ static void p_ctrl_work_handler(struct k_work *work)
 
             ctx->last_measured = measured;
 
-            /* Calculate error and correction
-             * Formula: correction = (error * gain) / 100
-             * where gain is scaled by 100 (0-1000 represents 0.0-10.0)
+            /* Calculate error
+             * Formula: error = setpoint - measured
              */
             int16_t error = (int16_t)setpoint - (int16_t)measured;
 
-            /* Calculate correction with proper scaling
-             * gain range: 0-1000 (represents 0.0-10.0)
-             * divide by 100 to get actual gain multiplier
+            /* Update integral sum with anti-windup
+             * integral = integral + error
+             * Clamp to prevent windup
              */
-            int32_t correction = ((int32_t)error * (int32_t)gain) / 100;
+            ctx->integral_sum += error;
 
-            /* Calculate PWM: feed_forward + correction */
-            int32_t pwm_calc = (int32_t)feed_forward + correction;
+            /* Anti-windup: clamp integral sum */
+            if (ctx->integral_sum > P_CTRL_INTEGRAL_LIMIT) {
+                ctx->integral_sum = P_CTRL_INTEGRAL_LIMIT;
+            } else if (ctx->integral_sum < -P_CTRL_INTEGRAL_LIMIT) {
+                ctx->integral_sum = -P_CTRL_INTEGRAL_LIMIT;
+            }
+
+            /* Calculate proportional term
+             * prop = (error * Kp) / 100
+             * where Kp is scaled by 100 (0-1000 represents 0.0-10.0)
+             */
+            int32_t prop_term = ((int32_t)error * (int32_t)gain) / 100;
+
+            /* Calculate integral term
+             * integral = (integral_sum * Ki) / 100
+             * where Ki is scaled by 100 (0-1000 represents 0.0-10.0)
+             */
+            int32_t int_term = ((int32_t)ctx->integral_sum * (int32_t)ki) / 100;
+
+            /* Calculate PWM: feed_forward + prop + integral */
+            int32_t pwm_calc = (int32_t)feed_forward + prop_term + int_term;
 
             /* Clamp to valid range */
             if (pwm_calc < P_CTRL_PWM_MIN) {
                 pwm_calc = P_CTRL_PWM_MIN;
             } else if (pwm_calc > P_CTRL_PWM_MAX) {
                 pwm_calc = P_CTRL_PWM_MAX;
+            }
+
+            /* Back-calculate integral (anti-windup for output saturation)
+             * If PWM is saturated, reduce integral to prevent windup
+             */
+            if (pwm_calc == P_CTRL_PWM_MAX && int_term > 0) {
+                /* Reduce integral to match saturation limit */
+                int32_t max_int = P_CTRL_PWM_MAX - (int32_t)feed_forward - prop_term;
+                if (max_int >= 0 && ki > 0) {
+                    ctx->integral_sum = (max_int * 100) / ki;
+                }
+            } else if (pwm_calc == P_CTRL_PWM_MIN && int_term < 0) {
+                /* Reduce integral to match saturation limit */
+                int32_t min_int = P_CTRL_PWM_MIN - (int32_t)feed_forward - prop_term;
+                if (ki > 0) {
+                    ctx->integral_sum = (min_int * 100) / ki;
+                }
             }
 
             pwm_output = (uint8_t)pwm_calc;
@@ -132,6 +169,7 @@ int p_ctrl_init(struct p_ctrl_ctx *ctx)
     atomic_set(&ctx->mode, P_CTRL_MODE_MANUAL);
     atomic_set(&ctx->setpoint, 0);
     atomic_set(&ctx->gain, 0);
+    atomic_set(&ctx->ki, 0);
     atomic_set(&ctx->feed_forward, 0);
 
     /* Initialize timer with user data */
@@ -144,12 +182,13 @@ int p_ctrl_init(struct p_ctrl_ctx *ctx)
     /* Initialize state */
     ctx->last_measured = 0;
     ctx->last_pwm = 0;
+    ctx->integral_sum = 0;
     ctx->streaming = false;
     ctx->stream_interval_ticks = P_CTRL_CONTROL_HZ / P_CTRL_STREAM_HZ_DEFAULT;
     ctx->stream_counter = 0;
     ctx->initialized = true;
 
-    LOG_INF("P-controller initialized");
+    LOG_INF("PI-controller initialized");
 
     return 0;
 }
@@ -171,13 +210,14 @@ void p_ctrl_set_mode(struct p_ctrl_ctx *ctx, uint8_t mode)
 
     /* Handle timer state based on mode */
     if (mode == P_CTRL_MODE_AUTO && old_mode == P_CTRL_MODE_MANUAL) {
-        /* Transition to AUTO: Start timer */
+        /* Transition to AUTO: Start timer and reset integral */
+        ctx->integral_sum = 0;  /* Reset integral to prevent windup from old values */
         k_timer_start(&ctx->timer, CONTROL_INTERVAL_US, CONTROL_INTERVAL_US);
-        LOG_INF("P-controller: MANUAL -> AUTO (timer started)");
+        LOG_INF("PI-controller: MANUAL -> AUTO (timer started, integral reset)");
     } else if (mode == P_CTRL_MODE_MANUAL && old_mode == P_CTRL_MODE_AUTO) {
         /* Transition to MANUAL: Stop timer */
         k_timer_stop(&ctx->timer);
-        LOG_INF("P-controller: AUTO -> MANUAL (timer stopped)");
+        LOG_INF("PI-controller: AUTO -> MANUAL (timer stopped)");
     }
 }
 
@@ -221,6 +261,29 @@ void p_ctrl_set_feed_forward(struct p_ctrl_ctx *ctx, uint8_t ff)
     }
 
     atomic_set(&ctx->feed_forward, ff);
+}
+
+void p_ctrl_set_ki(struct p_ctrl_ctx *ctx, uint16_t ki)
+{
+    if (ctx == NULL || !ctx->initialized) {
+        return;
+    }
+
+    /* Clamp to valid range */
+    if (ki > P_CTRL_KI_MAX) {
+        ki = P_CTRL_KI_MAX;
+    }
+
+    atomic_set(&ctx->ki, ki);
+}
+
+void p_ctrl_reset_integral(struct p_ctrl_ctx *ctx)
+{
+    if (ctx == NULL || !ctx->initialized) {
+        return;
+    }
+
+    ctx->integral_sum = 0;
 }
 
 void p_ctrl_set_callbacks(struct p_ctrl_ctx *ctx,
