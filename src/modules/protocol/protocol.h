@@ -59,6 +59,9 @@
 /** @brief Command byte for set PI-controller Ki (H/L bytes) */
 #define PROTO_CMD_SET_P_KI           0x0D
 
+/** @brief Command byte for set IIR filter alpha (numerator/denominator) */
+#define PROTO_CMD_SET_FILTER_ALPHA   0x0E
+
 /** @brief Response marker for P-stream data (reuses CMD_START_P_STREAM as marker) */
 #define PROTO_RESP_P_STREAM          PROTO_CMD_START_P_STREAM
 
@@ -128,6 +131,9 @@ enum proto_state {
 	PROTO_STATE_WAIT_P_KI_L,               /**< Waiting for Ki low byte */
 	PROTO_STATE_WAIT_P_KI_CRC,             /**< Waiting for CRC byte (SET_P_KI) */
 	PROTO_STATE_WAIT_P_FF_CRC,             /**< Waiting for CRC byte (SET_FEED_FORWARD) */
+	PROTO_STATE_WAIT_FILTER_ALPHA_NUM,     /**< Waiting for filter alpha numerator */
+	PROTO_STATE_WAIT_FILTER_ALPHA_DEN,     /**< Waiting for filter alpha denominator */
+	PROTO_STATE_WAIT_FILTER_ALPHA_CRC,     /**< Waiting for CRC byte (SET_FILTER_ALPHA) */
 	PROTO_STATE_WAIT_P_STREAM_RATE_H,      /**< Waiting for stream rate high byte */
 	PROTO_STATE_WAIT_P_STREAM_RATE_L,      /**< Waiting for stream rate low byte */
 	PROTO_STATE_WAIT_P_STREAM_CRC,         /**< Waiting for CRC byte (START_P_STREAM) */
@@ -237,6 +243,14 @@ typedef int (*proto_stop_p_stream_cb)(void);
  */
 typedef int (*proto_get_p_status_cb)(void);
 
+/**
+ * @brief Callback type for set IIR filter alpha
+ *
+ * @param num Alpha numerator (1-255)
+ * @param den Alpha denominator (1-255)
+ */
+typedef void (*proto_filter_alpha_cb)(uint8_t num, uint8_t den);
+
 /* =========================================================================
  * GENERAL CALLBACK TYPES
  * ========================================================================= */
@@ -321,6 +335,9 @@ struct proto_ctx {
 
 	/** Callback: Get PI-controller status */
 	proto_get_p_status_cb on_get_p_status;
+
+	/** Callback: Set IIR filter alpha */
+	proto_filter_alpha_cb on_filter_alpha_set;
 
 	/** Callback: Send response byte */
 	proto_send_resp_cb send_resp;

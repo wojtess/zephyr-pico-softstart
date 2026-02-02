@@ -38,8 +38,10 @@
  *          Transfer function: H(z) = α / (1 - (1-α)z^(-1))
  *          Difference equation: y[n] = α*x[n] + (1-α)*y[n-1]
  *
- *          Fixed-point implementation (α = 1/256):
- *          y[n] = (x[n] + 255*y[n-1]) / 256
+ *          Fixed-point implementation with runtime alpha:
+ *          y[n] = (alpha_num * x[n] + (alpha_den - alpha_num) * y[n-1]) / alpha_den
+ *
+ *          For power-of-2 denominator, uses bit shift for efficiency.
  *
  *          α (alpha) determines filter response:
  *          - Small α = strong filtering, slow response
@@ -59,10 +61,21 @@
  */
 static uint16_t apply_iir_lpf(struct adc_reader_ctx *ctx, uint16_t raw_value)
 {
-	/* Fixed-point IIR filter: y[n] = (x[n] + 255 * y[n-1]) / 256
-	 * Using 32-bit arithmetic to avoid overflow during multiplication
-	 * Filter state holds y[n-1] from previous sample */
-	uint32_t y_new = (raw_value + 255U * ctx->filter_state) >> ADC_IIR_ALPHA_SHIFT;
+	uint32_t y_new;
+
+	/* Use runtime alpha parameters */
+	uint8_t alpha_num = ctx->alpha_num;
+	uint8_t alpha_den = ctx->alpha_den;
+
+	if (ctx->alpha_shift > 0) {
+		/* Power-of-2 denominator: use bit shift for efficiency
+		 * y[n] = (alpha_num * x[n] + (alpha_den - alpha_num) * y[n-1]) >> alpha_shift */
+		y_new = (alpha_num * raw_value + (alpha_den - alpha_num) * ctx->filter_state) >> ctx->alpha_shift;
+	} else {
+		/* Non-power-of-2 denominator: use division
+		 * y[n] = (alpha_num * x[n] + (alpha_den - alpha_num) * y[n-1]) / alpha_den */
+		y_new = (alpha_num * raw_value + (alpha_den - alpha_num) * ctx->filter_state) / alpha_den;
+	}
 
 	/* Update filter state for next iteration */
 	ctx->filter_state = y_new;
@@ -230,6 +243,11 @@ int adc_reader_init(struct adc_reader_ctx *ctx,
 	/* Initialize filter state (explicitly zero buffer) */
 	adc_reader_reset_filter(ctx);
 
+	/* Set default alpha values (1/256 for ~12Hz cutoff at 20kHz) */
+	ctx->alpha_num = ADC_IIR_ALPHA_NUMERATOR;
+	ctx->alpha_den = ADC_IIR_ALPHA_DENOMINATOR;
+	ctx->alpha_shift = ADC_IIR_ALPHA_SHIFT;
+
 	/* Initialize timer with user data */
 	k_timer_init(&ctx->timer, adc_reader_timer_expiry, NULL);
 
@@ -386,6 +404,44 @@ int adc_reader_set_interval(struct adc_reader_ctx *ctx, uint32_t interval_us)
 			      K_USEC(ctx->interval_us),
 			      K_USEC(ctx->interval_us));
 	}
+
+	return 0;
+}
+
+/**
+ * @brief Set IIR filter alpha coefficient at runtime
+ */
+int adc_reader_set_alpha(struct adc_reader_ctx *ctx, uint8_t numerator, uint8_t denominator)
+{
+	if (!ctx || !ctx->initialized) {
+		return -EINVAL;
+	}
+
+	/* Validate inputs */
+	if (numerator == 0 || denominator == 0 || numerator > denominator) {
+		return -EINVAL;
+	}
+
+	/* Check if denominator is power of 2 */
+	uint8_t shift = 0;
+	uint8_t temp = denominator;
+	while (temp > 1) {
+		if (temp & 1) {
+			/* Not a power of 2 */
+			shift = 0;
+			break;
+		}
+		temp >>= 1;
+		shift++;
+	}
+
+	/* Update alpha parameters */
+	ctx->alpha_num = numerator;
+	ctx->alpha_den = denominator;
+	ctx->alpha_shift = shift;
+
+	/* Reset filter state when changing alpha */
+	adc_reader_reset_filter(ctx);
 
 	return 0;
 }
