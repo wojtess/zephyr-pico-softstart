@@ -117,8 +117,8 @@ def create_main_window(app: LEDControllerApp) -> None:
                     dpg.add_text("Raw:", color=[150, 150, 150])
                     dpg.add_text(tag=TAGS["adc_value_raw"], default_value="--", color=[100, 200, 255])
                     dpg.add_spacer(width=5)
-                    dpg.add_text("Volt:", color=[150, 150, 150])
-                    dpg.add_text(tag=TAGS["adc_value_voltage"], default_value="-- V", color=[100, 255, 100])
+                    dpg.add_text("Amp:", color=[150, 150, 150])
+                    dpg.add_text(tag=TAGS["adc_value_amps"], default_value="-- A", color=[100, 255, 100])
                 dpg.add_button(label="Read ADC", tag=TAGS["adc_read_btn"], callback=on_adc_read_clicked, user_data=app, width=-1, enabled=False)
 
                 dpg.add_spacer(height=2)
@@ -235,7 +235,7 @@ def create_main_window(app: LEDControllerApp) -> None:
                     y_axis = dpg.add_plot_axis(dpg.mvYAxis, label="Value")
 
                     dpg.add_line_series([], [], tag=TAGS["adc_series_raw"], label="Raw (0-4095)", parent=y_axis)
-                    dpg.add_line_series([], [], tag=TAGS["adc_series_voltage"], label="Voltage (V)", parent=y_axis)
+                    dpg.add_line_series([], [], tag=TAGS["adc_series_amps"], label="Current (A)", parent=y_axis)
                     dpg.add_plot_legend()
 
                 # Status bar

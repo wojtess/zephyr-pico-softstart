@@ -12,7 +12,7 @@ import serial
 import dearpygui.dearpygui as dpg
 
 from .constants import TAGS, SerialCommand, SerialTask, P_MODE_MANUAL, P_MODE_AUTO
-from .app import LEDControllerApp
+from .app import LEDControllerApp, ADC_TO_AMPS
 from .utils import (
     find_ports_with_info,
     update_status,
@@ -216,11 +216,11 @@ def on_adc_read_clicked(sender, app_data, user_data: LEDControllerApp) -> None:
                 # Update ADC value displays
                 if result.adc_value is not None:
                     raw = result.adc_value
-                    voltage = (raw / 4095.0) * 3.3
+                    amps = raw * ADC_TO_AMPS
                     if dpg.does_item_exist(TAGS["adc_value_raw"]):
                         dpg.set_value(TAGS["adc_value_raw"], f"{raw}")
-                    if dpg.does_item_exist(TAGS["adc_value_voltage"]):
-                        dpg.set_value(TAGS["adc_value_voltage"], f"{voltage:.3f} V")
+                    if dpg.does_item_exist(TAGS["adc_value_amps"]):
+                        dpg.set_value(TAGS["adc_value_amps"], f"{amps:.3f} A")
 
                 update_status(f"ADC read: {result.adc_value}", [100, 200, 100])
                 update_last_response(f"ACK: ADC={result.adc_value}")

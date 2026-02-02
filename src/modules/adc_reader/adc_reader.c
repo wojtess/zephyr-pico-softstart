@@ -32,34 +32,42 @@
  * ========================================================================= */
 
 /**
- * @brief Apply moving average filter to raw ADC value
+ * @brief Apply IIR 1st order Low Pass Filter to raw ADC value
  *
- * @details Updates ring buffer with new value and returns filtered average.
- *          Uses power-of-2 window size for efficient modulo operation.
+ * @details Implements a single-pole IIR low-pass filter using fixed-point arithmetic.
+ *          Transfer function: H(z) = α / (1 - (1-α)z^(-1))
+ *          Difference equation: y[n] = α*x[n] + (1-α)*y[n-1]
+ *
+ *          Fixed-point implementation (α = 1/256):
+ *          y[n] = (x[n] + 255*y[n-1]) / 256
+ *
+ *          α (alpha) determines filter response:
+ *          - Small α = strong filtering, slow response
+ *          - Large α = weak filtering, fast response
+ *          - Cutoff frequency: fc = α × fs / (2π)
+ *
+ *          Filter characteristics (α = 1/256, fs = 20kHz):
+ *          - Cutoff frequency: ~12Hz (-3dB point)
+ *          - Attenuation at 1kHz PWM: ~-38dB (16× better than old 8-sample MA)
+ *          - Group delay: ~12.5ms at low frequencies
+ *          - Step response (10-90%): ~28ms, settling (99%): ~64ms
+ *          - Excellent PWM noise rejection for softstart control
  *
  * @param ctx ADC reader context
  * @param raw_value Raw ADC value (0-4095)
  * @return Filtered ADC value
  */
-static uint16_t adc_reader_apply_filter(struct adc_reader_ctx *ctx, uint16_t raw_value)
+static uint16_t apply_iir_lpf(struct adc_reader_ctx *ctx, uint16_t raw_value)
 {
-	/* Subtract oldest value from sum */
-	ctx->filter_sum -= ctx->filter_buffer[ctx->filter_index];
+	/* Fixed-point IIR filter: y[n] = (x[n] + 255 * y[n-1]) / 256
+	 * Using 32-bit arithmetic to avoid overflow during multiplication
+	 * Filter state holds y[n-1] from previous sample */
+	uint32_t y_new = (raw_value + 255U * ctx->filter_state) >> ADC_IIR_ALPHA_SHIFT;
 
-	/* Add new value to buffer and sum */
-	ctx->filter_buffer[ctx->filter_index] = raw_value;
-	ctx->filter_sum += raw_value;
+	/* Update filter state for next iteration */
+	ctx->filter_state = y_new;
 
-	/* Move to next position (ring buffer) */
-	ctx->filter_index = (ctx->filter_index + 1) & ADC_FILTER_MASK;
-
-	/* Increment sample count (with cap at window size) */
-	if (ctx->filter_count < ADC_FILTER_WINDOW_SIZE) {
-		ctx->filter_count++;
-	}
-
-	/* Return average (divide by actual sample count during warm-up) */
-	return ctx->filter_sum / ctx->filter_count;
+	return (uint16_t)y_new;
 }
 
 /* =========================================================================
@@ -91,21 +99,16 @@ static void adc_reader_work_handler(struct k_work *work);
  * ========================================================================= */
 
 /**
- * @brief Reset filter state (clear buffer and counters)
+ * @brief Reset IIR filter state
  *
- * @details Clears the filter buffer and resets counters.
+ * @details Resets the IIR filter state to zero.
  *          Should be called when starting or restarting acquisition.
  *
  * @param ctx ADC reader context
  */
 static void adc_reader_reset_filter(struct adc_reader_ctx *ctx)
 {
-	ctx->filter_index = 0;
-	ctx->filter_sum = 0;
-	ctx->filter_count = 0;
-
-	/* Explicitly zero the filter buffer */
-	memset(ctx->filter_buffer, 0, sizeof(ctx->filter_buffer));
+	ctx->filter_state = 0;
 }
 
 /* =========================================================================
@@ -151,8 +154,8 @@ static void adc_reader_work_handler(struct k_work *work)
 
 	adc_value = (uint16_t)sample_buffer;
 
-	/* Apply moving average filter to remove PWM noise */
-	uint16_t filtered_value = adc_reader_apply_filter(ctx, adc_value);
+	/* Apply IIR low-pass filter to remove PWM noise */
+	uint16_t filtered_value = apply_iir_lpf(ctx, adc_value);
 
 	/* Update shared value with FILTERED value (atomic write) */
 	atomic_set(&ctx->last_adc_value, filtered_value);

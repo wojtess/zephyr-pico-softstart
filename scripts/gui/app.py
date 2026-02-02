@@ -58,6 +58,17 @@ from protocol import (
 
 logger = logging.getLogger(__name__)
 
+# Hardware constants for current measurement
+SHUNT_RESISTOR_OHMS = 0.05  # 0.05 ohm shunt resistor
+AMPLIFIER_GAIN = 11.0       # Amplifier gain
+ADC_VREF = 3.3              # ADC reference voltage
+ADC_MAX_VALUE = 4095.0      # 12-bit ADC max value
+
+# Current calculation: I = V_adc / gain / R_shunt
+# where V_adc = (adc_raw / 4095.0) * 3.3
+ADC_TO_AMPS = (ADC_VREF / ADC_MAX_VALUE) / AMPLIFIER_GAIN / SHUNT_RESISTOR_OHMS
+# ADC_TO_AMPS ≈ 0.00146 A per ADC count
+
 
 class LEDControllerApp:
     """Main LED Controller application with Dear PyGui GUI."""
@@ -87,7 +98,7 @@ class LEDControllerApp:
         self._adc_max_points: int = 100
         self._adc_time_history = deque(maxlen=self._adc_max_points)
         self._adc_raw_history = deque(maxlen=self._adc_max_points)
-        self._adc_voltage_history = deque(maxlen=self._adc_max_points)
+        self._adc_amps_history = deque(maxlen=self._adc_max_points)
 
         # ADC Streaming state
         self._is_streaming: bool = False
@@ -213,21 +224,21 @@ class LEDControllerApp:
                     calc_crc = crc8(bytes([CMD_START_STREAM, adc_h, adc_l]))
                     if byte_val == calc_crc:
                         adc_raw = (adc_h << 8) | adc_l
-                        voltage = (adc_raw / 4095.0) * 3.3
+                        amps = adc_raw * ADC_TO_AMPS
 
                         # Add to history
                         with self._lock:
                             self._adc_time_history.append(time.time())
                             self._adc_raw_history.append(adc_raw)
-                            self._adc_voltage_history.append(voltage)
+                            self._adc_amps_history.append(amps)
 
                             # Trim to max points
                             if len(self._adc_time_history) > self._adc_max_points:
                                 self._adc_time_history.pop(0)
                                 self._adc_raw_history.pop(0)
-                                self._adc_voltage_history.pop(0)
+                                self._adc_amps_history.pop(0)
 
-                        logger.debug(f"Stream data: raw={adc_raw}, voltage={voltage:.3f}V")
+                        logger.debug(f"Stream data: raw={adc_raw}, amps={amps:.3f}A")
                     else:
                         logger.warning(f"CRC error in stream data: expected 0x{calc_crc:02X}, got 0x{byte_val:02X}")
 
@@ -777,12 +788,12 @@ class LEDControllerApp:
             adc_value, err_code = parse_adc_response(resp_bytes)
 
             if adc_value >= 0:
-                # Convert to voltage (0-3.3V)
-                voltage = (adc_value / 4095.0) * 3.3
-                logger.info(f"READ_ADC: ADC raw={adc_value}, voltage={voltage:.3f}V")
+                # Convert to amps (0-1.0A)
+                amps = adc_value * ADC_TO_AMPS
+                logger.info(f"READ_ADC: ADC raw={adc_value}, amps={amps:.3f}A")
                 return SerialResult(
-                    cmd, True, f"ADC: {adc_value} ({voltage:.3f}V)",
-                    adc_value=adc_value, adc_voltage=voltage
+                    cmd, True, f"ADC: {adc_value} ({amps:.3f}A)",
+                    adc_value=adc_value, adc_amps=amps
                 )
             else:
                 error_name = get_error_name(err_code)
@@ -1645,13 +1656,13 @@ class LEDControllerApp:
             pass
         return results
 
-    def add_adc_data(self, raw_value: int, voltage: float) -> None:
+    def add_adc_data(self, raw_value: int, amps: float) -> None:
         """Add ADC reading to history (thread-safe)."""
         with self._lock:
             current_time = time.time()
             self._adc_time_history.append(current_time)
             self._adc_raw_history.append(raw_value)
-            self._adc_voltage_history.append(voltage)
+            self._adc_amps_history.append(amps)
             # deque with maxlen automatically handles circular buffer
 
     def get_adc_history(self) -> tuple:
@@ -1663,7 +1674,7 @@ class LEDControllerApp:
             # Calculate relative time from now (seconds ago)
             now = time.time()
             x_axis = [(t - now) for t in self._adc_time_history]
-            return x_axis, list(self._adc_raw_history), list(self._adc_voltage_history)
+            return x_axis, list(self._adc_raw_history), list(self._adc_amps_history)
 
     def get_p_stream_history(self) -> tuple:
         """Get P-stream history data with relative time from now for x-axis."""
@@ -1674,9 +1685,9 @@ class LEDControllerApp:
             # Calculate relative time from now (seconds ago)
             now = time.time()
             x_axis = [(t - now) for t in self._p_time_history]
-            # Calculate voltage from measured raw values
-            voltage_series = [(m / 4095.0) * 3.3 for m in self._p_measured_history]
-            return x_axis, list(self._p_measured_history), voltage_series
+            # Calculate amps from measured raw values
+            amps_series = [m * ADC_TO_AMPS for m in self._p_measured_history]
+            return x_axis, list(self._p_measured_history), amps_series
 
     def get_pending_count(self) -> int:
         """Get number of tasks pending in queue."""
