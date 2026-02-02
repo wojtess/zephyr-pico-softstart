@@ -691,17 +691,17 @@ def sync_p_params_to_firmware(app: LEDControllerApp) -> None:
     """
     # Get current gain value from slider
     gain = 1.0  # default
-    if dpg.exists(TAGS["p_gain_slider"]):
+    if dpg.does_item_exist(TAGS["p_gain_slider"]):
         gain = dpg.get_value(TAGS["p_gain_slider"])
 
     # Get current Ki value from slider
     ki = 0.0  # default
-    if dpg.exists(TAGS["p_ki_slider"]):
+    if dpg.does_item_exist(TAGS["p_ki_slider"]):
         ki = dpg.get_value(TAGS["p_ki_slider"])
 
     # Get current feed-forward value from slider
     ff = 0  # default
-    if dpg.exists(TAGS["p_ff_slider"]):
+    if dpg.does_item_exist(TAGS["p_ff_slider"]):
         ff = dpg.get_value(TAGS["p_ff_slider"])
 
     logger.info(f"Syncing PI-params to firmware: gain={gain:.2f}, ki={ki:.2f}, ff={ff}%")
@@ -1058,3 +1058,50 @@ def on_adc_stream_enable_changed(sender, app_data, user_data: LEDControllerApp) 
     else:
         # Stop ADC streaming
         on_stream_stop_clicked(sender, app_data, user_data)
+
+
+def on_filter_alpha_changed(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Handle filter alpha input change."""
+    # Fixed denominator of 255 (max for uint8_t in firmware)
+    # Slider changes numerator (1-255)
+    # This gives alpha range of 1/255 to 255/255
+    # Note: Firmware uses shift=8 internally, so actual denom is 256
+    num = max(1, min(255, int(app_data)))  # Clamp to 1-255
+    den = 255  # Max uint8_t value (firmware uses shift=8 for /256)
+
+    logger.info(f"Filter alpha changed to {num}/{den}")
+
+    # Update label to show actual alpha value
+    alpha_val = num / 256  # Actual alpha (firmware uses denom=256)
+    if dpg.does_item_exist(TAGS["filter_alpha_label"]):
+        dpg.set_value(TAGS["filter_alpha_label"], f"α = {num}/256 = {alpha_val:.4f}")
+
+    # Update info text
+    if dpg.does_item_exist(TAGS["filter_alpha_info"]):
+        # Calculate cutoff frequency: fc = alpha * fs / (2*pi)
+        # Assuming 20kHz sampling rate
+        fs = 20000  # Hz
+        fc = alpha_val * fs / (2 * 3.14159)
+        dpg.set_value(TAGS["filter_alpha_info"], f"fc ≈ {fc:.0f}Hz")
+
+    # Send command to device
+    task = SerialTask(command=SerialCommand.SET_FILTER_ALPHA, filter_alpha_num=num, filter_alpha_den=den)
+    result_queue = user_data.send_task(task)
+
+    # Check result in background thread
+    def check_alpha():
+        try:
+            result = result_queue.get(timeout=2)
+            if result.success:
+                update_status(f"Filter alpha set to {num}/{den}", [100, 200, 100])
+                update_last_response(f"ACK: α={num}/{den}")
+            else:
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+                update_status(f"Filter alpha error: {result.message}", [255, 100, 100])
+                update_last_response(f"NACK: {result.error or 'Unknown'}")
+        except queue.Empty:
+            update_status("Filter alpha timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_alpha, daemon=True).start()
