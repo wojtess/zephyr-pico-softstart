@@ -22,12 +22,10 @@ LOG_MODULE_REGISTER(oled_display, LOG_LEVEL_INF);
  * INTERNAL CONSTANTS
  * ========================================================================= */
 
-/** @brief Font height for CFB (default 8 pixels) */
-#define DISPLAY_FONT_HEIGHT  8
+/** @brief First line Y position */
+#define DISPLAY_LINE1_Y  0
 
-/** @brief Display text positions (calculated from font height) */
-#define DISPLAY_LINE1_Y  0   /**< First line Y position */
-#define DISPLAY_LINE2_Y  DISPLAY_FONT_HEIGHT  /**< Second line Y position */
+/** @brief Second line Y position (calculated as font_height from context) */
 
 /* =========================================================================
  * FORWARD DECLARATIONS
@@ -70,21 +68,26 @@ static void oled_display_work_handler(struct k_work *work)
         adc_value = adc_reader_get_last(ctx->adc_reader);
     }
 
-    /* Format display strings */
+    /* Format display strings - compact format to fit 128px width with Font 1 (15x24) */
     char line1[16];
     char line2[16];
 
-    snprintf(line1, sizeof(line1), "SET: %4u", setpoint);
-    snprintf(line2, sizeof(line2), "ADC: %4u", adc_value);
+    /* "SET:4095" = 8 chars × 15px = 120px (fits in 128px) */
+    snprintf(line1, sizeof(line1), "SET:%u", setpoint);
+    snprintf(line2, sizeof(line2), "ADC:%u", adc_value);
+
+    /* Calculate line positions using actual font height */
+    const uint8_t line1_y = DISPLAY_LINE1_Y;
+    const uint8_t line2_y = ctx->font_height;  /* Use actual font height! */
 
     /* Clear and update display */
     cfb_framebuffer_clear(ctx->display_dev, false);
 
-    if (cfb_print(ctx->display_dev, line1, 0, DISPLAY_LINE1_Y) != 0) {
+    if (cfb_print(ctx->display_dev, line1, 0, line1_y) != 0) {
         LOG_WRN("Failed to print line 1");
     }
 
-    if (cfb_print(ctx->display_dev, line2, 0, DISPLAY_LINE2_Y) != 0) {
+    if (cfb_print(ctx->display_dev, line2, 0, line2_y) != 0) {
         LOG_WRN("Failed to print line 2");
     }
 
@@ -128,18 +131,20 @@ int oled_display_init(struct oled_display_ctx *ctx)
         return -ENODEV;
     }
 
-    /* Initialize character framebuffer */
-    if (cfb_framebuffer_init(ctx->display_dev) != 0) {
-        LOG_ERR("Framebuffer initialization failed");
-        return -EIO;
-    }
-
-    /* Set pixel format (try MONO10 first, fallback to MONO01) */
+    /* IMPORTANT: Set pixel format BEFORE initializing CFB!
+     * For OLED: try MONO10 first (1=white on black), fallback to MONO01 */
     if (display_set_pixel_format(ctx->display_dev, PIXEL_FORMAT_MONO10) != 0) {
+        LOG_WRN("MONO10 failed, trying MONO01");
         if (display_set_pixel_format(ctx->display_dev, PIXEL_FORMAT_MONO01) != 0) {
             LOG_ERR("Failed to set pixel format");
             return -EIO;
         }
+    }
+
+    /* Initialize character framebuffer AFTER setting pixel format */
+    if (cfb_framebuffer_init(ctx->display_dev) != 0) {
+        LOG_ERR("Framebuffer initialization failed");
+        return -EIO;
     }
 
     /* Clear display */
@@ -147,6 +152,27 @@ int oled_display_init(struct oled_display_ctx *ctx)
 
     /* Turn off display blanking */
     display_blanking_off(ctx->display_dev);
+
+    /* Query and set available fonts */
+    uint8_t font_count = cfb_get_numof_fonts(ctx->display_dev);
+
+    for (uint8_t i = 0; i < font_count; ++i) {
+        uint8_t w, h;
+        cfb_get_font_size(ctx->display_dev, i, &w, &h);
+    }
+
+    /* Set font 1 (15x24) - good compromise: readable and fits 8 chars on 128px width
+     * 8 chars × 15px = 120px < 128px (fits!)
+     * 2 lines × 24px = 48px < 64px (fits!) */
+    const uint8_t selected_font = 1;
+    if (cfb_framebuffer_set_font(ctx->display_dev, selected_font) != 0) {
+        LOG_WRN("Failed to set font %d, trying font 0", selected_font);
+        cfb_framebuffer_set_font(ctx->display_dev, 0);
+        cfb_get_font_size(ctx->display_dev, 0, &ctx->font_width, &ctx->font_height);
+    } else {
+        cfb_get_font_size(ctx->display_dev, selected_font, &ctx->font_width, &ctx->font_height);
+    }
+    LOG_INF("Selected font: %dx%d", ctx->font_width, ctx->font_height);
 
     /* Get display parameters */
     uint16_t x_res = cfb_get_display_parameter(ctx->display_dev, CFB_DISPLAY_WIDTH);
