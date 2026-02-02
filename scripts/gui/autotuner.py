@@ -46,7 +46,7 @@ class PIParameters:
 class Autotuner:
     """Automatic PI controller tuner using Ziegler-Nichols method."""
 
-    def __init__(self, app, adc_to_amps: float = 0.00146):
+    def __init__(self, app, adc_to_amps: float = 0.000285):
         """Initialize autotuner.
 
         Args:

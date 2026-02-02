@@ -3,10 +3,10 @@ Hardware configuration and ADC-to-current conversion for RP2040 LED Control.
 
 Current sensing circuit:
 - Shunt resistor: 0.05 ohm
-- Op-amp gain: 11x
+- Op-amp gain: 56.6x
 - Vref: 3.3V
 - ADC: 12-bit (0-4095)
-- Current range: 0-6A
+- Current range: 0-1.17A
 """
 
 from typing import Tuple
@@ -17,7 +17,7 @@ ADC_BITS: int = 12
 ADC_MAX: int = (1 << ADC_BITS) - 1  # 4095
 VREF: float = 3.3
 SHUNT_R: float = 0.05  # ohms
-OPAMP_GAIN: float = 11.0
+OPAMP_GAIN: float = 56.6
 
 # Derived constants
 VOLTAGE_PER_ADC: float = VREF / ADC_MAX  # Volts per ADC LSB
@@ -33,7 +33,7 @@ def adc_to_current(adc_raw: int) -> float:
         adc_raw: Raw ADC value (0-4095)
 
     Returns:
-        Current in amperes (0.0 - 6.0)
+        Current in amperes (0.0 - 1.17)
 
     Raises:
         ValueError: If adc_raw is out of range
@@ -52,7 +52,7 @@ def current_to_adc(current: float) -> int:
     Convert current in amperes to ADC raw value.
 
     Args:
-        current: Current in amperes (0.0 - 6.0)
+        current: Current in amperes (0.0 - 1.17)
 
     Returns:
         ADC raw value (0-4095)
@@ -64,7 +64,7 @@ def current_to_adc(current: float) -> int:
         raise ValueError(f"Current {current} cannot be negative")
 
     # Clamp to max measurable current
-    current_clamped = min(current, 6.0)
+    current_clamped = min(current, 1.17)
 
     shunt_voltage = current_clamped * SHUNT_R
     voltage = shunt_voltage * OPAMP_GAIN
@@ -81,13 +81,13 @@ def get_adc_range() -> Tuple[int, int]:
 
 def get_current_range() -> Tuple[float, float]:
     """Return current range in amperes as (min, max)."""
-    return (0.0, 6.0)
+    return (0.0, 1.17)
 
 
 def get_adc_resolution() -> float:
     """
     Return ADC resolution in amperes per LSB.
 
-    At 6A full scale over 4095 steps: ~1.47 mA per LSB.
+    At 1.17A full scale over 4095 steps: ~0.285 mA per LSB.
     """
     return AMPS_PER_ADC
