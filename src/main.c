@@ -340,6 +340,17 @@ static int p_ctrl_get_status_cb(void)
 	return 0;
 }
 
+/**
+ * @brief Set IIR filter alpha callback
+ *
+ * @param num Alpha numerator (1-255)
+ * @param den Alpha denominator (1-255)
+ */
+static void filter_alpha_set_cb(uint8_t num, uint8_t den)
+{
+	adc_reader_set_alpha(&g_adc_reader, num, den);
+}
+
 /* =========================================================================
  * UART INTERRUPT HANDLERS
  * ========================================================================= */
@@ -506,6 +517,7 @@ int main(void)
 	g_proto.on_start_p_stream = p_ctrl_start_stream_cb;
 	g_proto.on_stop_p_stream = p_ctrl_stop_stream_cb;
 	g_proto.on_get_p_status = p_ctrl_get_status_cb;
+	g_proto.on_filter_alpha_set = filter_alpha_set_cb;
 	/* Response callbacks */
 	g_proto.send_resp = send_response_cb;
 	g_proto.send_adc_resp = send_adc_response_cb;
@@ -532,7 +544,7 @@ int main(void)
 	printk("  0x08 <H><L><crc>  -> Set gain (0-1000, Kp=0.0-10.0)\n");
 	printk("  0x0C <ff> <crc>   -> Set feed-forward (0-100)\n");
 	printk("  0x09 <H><L><crc>  -> Start P-stream (rate Hz)\n");
-	printk("  0x0A <crc>        -> Stop P-stream\n");
+	printk("  0x0A <num><den><crc> -> Set filter alpha (num/den)\n");
 	printk("  Response: ACK=0xFF, NACK=0xFE\n");
 	printk("===================================\n\n");
 

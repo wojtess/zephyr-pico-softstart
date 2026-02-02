@@ -39,10 +39,12 @@ extern "C" {
  *          - Large α = weak filtering, fast response
  *          - Cutoff freq: fc = α × fs / (2π)
  *          - For α=1/256, fs=20kHz: fc ≈ 12Hz
+ *          - Note: alpha_den can store max 255 (uint8_t). For power-of-2 denominators
+ *            like 256, we use alpha_shift=8 and treat denominator as (1<<8)=256
  */
 #define ADC_IIR_ALPHA_NUMERATOR   1
-#define ADC_IIR_ALPHA_DENOMINATOR 256
-#define ADC_IIR_ALPHA_SHIFT       8  /* log2(256) for efficient fixed-point */
+#define ADC_IIR_ALPHA_DENOMINATOR 255  /* Max uint8_t value */
+#define ADC_IIR_ALPHA_SHIFT       8     /* log2(256) - actual denominator is 256 */
 
 /* =========================================================================
  * CONTEXT STRUCTURE
@@ -81,6 +83,15 @@ struct adc_reader_ctx {
 
 	/** IIR filter state (previous output y[n-1]) */
 	uint32_t filter_state;
+
+	/** IIR filter alpha numerator (runtime configurable) */
+	uint8_t alpha_num;
+
+	/** IIR filter alpha denominator (runtime configurable) */
+	uint8_t alpha_den;
+
+	/** Bit shift amount for power-of-2 denominator (0 if not power of 2) */
+	uint8_t alpha_shift;
 };
 
 /* =========================================================================
@@ -181,6 +192,27 @@ uint32_t adc_reader_get_interval(const struct adc_reader_ctx *ctx);
  * @return 0 on success, negative errno on failure
  */
 int adc_reader_set_interval(struct adc_reader_ctx *ctx, uint32_t interval_us);
+
+/**
+ * @brief Set IIR filter alpha coefficient at runtime
+ *
+ * @details Updates the IIR low-pass filter alpha coefficient.
+ *          Alpha formula: α = numerator / denominator
+ *          Filter equation: y[n] = (α * x[n] + (1-α) * y[n-1])
+ *
+ *          For power-of-2 denominator, shift is used for efficiency.
+ *          Recommended values:
+ *          - 1/256: 12Hz cutoff (very slow, strong filtering)
+ *          - 4/256: 50Hz cutoff (slow)
+ *          - 16/256: 200Hz cutoff (medium)
+ *          - 64/256: 790Hz cutoff (fast)
+ *
+ * @param ctx ADC reader context
+ * @param numerator Alpha numerator (1-255)
+ * @param denominator Alpha denominator (1-255, power of 2 recommended)
+ * @return 0 on success, negative errno on failure
+ */
+int adc_reader_set_alpha(struct adc_reader_ctx *ctx, uint8_t numerator, uint8_t denominator);
 
 #ifdef __cplusplus
 }
