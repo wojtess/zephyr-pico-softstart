@@ -210,6 +210,14 @@ uint8_t p_ctrl_get_pwm(struct p_ctrl_ctx *ctx);
  */
 uint16_t p_ctrl_get_measured(struct p_ctrl_ctx *ctx);
 
+/**
+ * @brief Get current setpoint value
+ *
+ * @param ctx Pointer to PI-controller context
+ * @return Current setpoint (0-4095)
+ */
+uint16_t p_ctrl_get_setpoint(struct p_ctrl_ctx *ctx);
+
 #ifdef __cplusplus
 }
 #endif

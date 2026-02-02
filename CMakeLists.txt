@@ -16,4 +16,5 @@ target_sources(app PRIVATE
     src/modules/adc_stream/adc_stream.c
     src/modules/p_controller/p_controller.c
     src/modules/adc_reader/adc_reader.c
+    src/modules/oled_display/oled_display.c
 )

@@ -4,6 +4,7 @@
 / {
 	chosen {
 		zephyr,console = &cdc_acm_uart0;
+		zephyr,display = &ssd1306;
 	};
 
 	/* ADC node for analog input on GPIO26 (ADC0) */
@@ -35,6 +36,28 @@
 	pinctrl-names = "default";
 };
 
+/* Enable I2C0 for SSD1306 display */
+&i2c0 {
+	status = "okay";
+	pinctrl-0 = <&i2c0_default>;
+	pinctrl-names = "default";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+
+	ssd1306: ssd1306@3c {
+		compatible = "solomon,ssd1306";
+		reg = <0x3c>;
+		width = <128>;
+		height = <64>;
+		segment-offset = <0>;
+		page-offset = <0>;
+		display-offset = <0>;
+		multiplex-ratio = <63>;
+		segment-remap;
+		com-invdir;
+		prechargep = <0x22>;
+	};
+};
+
 /* Add pinctrl configuration */
 &pinctrl {
 	/* PWM0 Channel A on GPIO16 (external PWM output) */
@@ -48,5 +71,12 @@
 	adc_default: adc_default {
 		pins = "gpio26";
 		function = "adc0";
+	};
+
+	/* I2C0 on GPIO4/GPIO5 for SSD1306 display */
+	i2c0_default: i2c0_default {
+		group1 {
+			pinmux = <I2C0_SDA_P4>, <I2C0_SCL_P5>;
+		};
 	};
 };

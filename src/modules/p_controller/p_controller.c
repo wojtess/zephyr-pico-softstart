@@ -359,3 +359,12 @@ uint16_t p_ctrl_get_measured(struct p_ctrl_ctx *ctx)
 
     return ctx->last_measured;
 }
+
+uint16_t p_ctrl_get_setpoint(struct p_ctrl_ctx *ctx)
+{
+    if (ctx == NULL || !ctx->initialized) {
+        return 0;
+    }
+
+    return (uint16_t)atomic_get(&ctx->setpoint);
+}

@@ -57,6 +57,7 @@
 #include "modules/threads/rx_thread.h"
 #include "modules/adc_stream/adc_stream.h"
 #include "modules/p_controller/p_controller.h"
+#include "modules/oled_display/oled_display.h"
 
 /* =========================================================================
  * CONSTANTS AND DEFINITIONS
@@ -107,6 +108,9 @@ static struct adc_reader_ctx g_adc_reader;
 
 /** @brief PI-controller context */
 static struct p_ctrl_ctx g_p_ctrl;
+
+/** @brief OLED display context */
+static struct oled_display_ctx g_oled_display;
 
 /* =========================================================================
  * FUNCTION PROTOTYPES
@@ -490,6 +494,23 @@ int main(void)
 
 	/* Set ADC reader for PI-controller */
 	p_ctrl_set_adc_reader(&g_p_ctrl, &g_adc_reader);
+
+	/* Initialize OLED display (non-fatal) */
+	if (oled_display_init(&g_oled_display) == 0) {
+		printk("OLED display initialized\n");
+		/* Set module references */
+		oled_display_set_p_controller(&g_oled_display, &g_p_ctrl);
+		oled_display_set_adc_reader(&g_oled_display, &g_adc_reader);
+
+		/* Start display updates */
+		if (oled_display_start(&g_oled_display) == 0) {
+			printk("OLED display updates started (4 Hz)\n");
+		} else {
+			printk("WARNING: Failed to start OLED display updates\n");
+		}
+	} else {
+		printk("WARNING: Failed to initialize OLED display - continuing without display\n");
+	}
 
 	/* Initialize RX ring buffer */
 	if (ringbuf_init(&g_rx_buf, rx_buf_data, RX_BUF_SIZE) != 0) {
