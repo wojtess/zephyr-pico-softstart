@@ -35,26 +35,29 @@
  * P-CONTROLLER COMMANDS (0x06 - 0x0C)
  * ========================================================================= */
 
-/** @brief Command byte for set P-controller mode (0=MANUAL, 1=AUTO) */
+/** @brief Command byte for set PI-controller mode (0=MANUAL, 1=AUTO) */
 #define PROTO_CMD_SET_MODE           0x06
 
-/** @brief Command byte for set P-controller setpoint (H/L bytes) */
+/** @brief Command byte for set PI-controller setpoint (H/L bytes) */
 #define PROTO_CMD_SET_P_SETPOINT     0x07
 
-/** @brief Command byte for set P-controller gain (H/L bytes) */
+/** @brief Command byte for set PI-controller gain (H/L bytes) */
 #define PROTO_CMD_SET_P_GAIN         0x08
 
-/** @brief Command byte for start P-controller streaming (rate H/L) */
+/** @brief Command byte for start PI-controller streaming (rate H/L) */
 #define PROTO_CMD_START_P_STREAM     0x09
 
-/** @brief Command byte for stop P-controller streaming */
+/** @brief Command byte for stop PI-controller streaming */
 #define PROTO_CMD_STOP_P_STREAM      0x0A
 
-/** @brief Command byte for get P-controller status */
+/** @brief Command byte for get PI-controller status */
 #define PROTO_CMD_GET_P_STATUS       0x0B
 
-/** @brief Command byte for set P-controller feed-forward */
+/** @brief Command byte for set PI-controller feed-forward */
 #define PROTO_CMD_SET_FEED_FORWARD   0x0C
+
+/** @brief Command byte for set PI-controller Ki (H/L bytes) */
+#define PROTO_CMD_SET_P_KI           0x0D
 
 /** @brief Response marker for P-stream data (reuses CMD_START_P_STREAM as marker) */
 #define PROTO_RESP_P_STREAM          PROTO_CMD_START_P_STREAM
@@ -93,6 +96,9 @@
 /** @brief Error code: Invalid feed-forward */
 #define PROTO_ERR_INVALID_FF        0x13
 
+/** @brief Error code: Invalid Ki (integral gain) */
+#define PROTO_ERR_INVALID_KI        0x14
+
 /* =========================================================================
  * PROTOCOL STATE MACHINE
  * ========================================================================= */
@@ -110,7 +116,7 @@ enum proto_state {
 	PROTO_STATE_WAIT_STREAM_CRC,        /**< Waiting for CRC byte (START_STREAM) */
 	PROTO_STATE_WAIT_STOP_STREAM_CRC,   /**< Waiting for CRC byte (STOP_STREAM) */
 
-	/* P-controller states */
+	/* PI-controller states */
 	PROTO_STATE_WAIT_SET_MODE_CRC,         /**< Waiting for CRC byte (SET_MODE) */
 	PROTO_STATE_WAIT_P_SETPOINT_H,         /**< Waiting for setpoint high byte */
 	PROTO_STATE_WAIT_P_SETPOINT_L,         /**< Waiting for setpoint low byte */
@@ -118,6 +124,9 @@ enum proto_state {
 	PROTO_STATE_WAIT_P_GAIN_H,             /**< Waiting for gain high byte */
 	PROTO_STATE_WAIT_P_GAIN_L,             /**< Waiting for gain low byte */
 	PROTO_STATE_WAIT_P_GAIN_CRC,           /**< Waiting for CRC byte (SET_P_GAIN) */
+	PROTO_STATE_WAIT_P_KI_H,               /**< Waiting for Ki high byte */
+	PROTO_STATE_WAIT_P_KI_L,               /**< Waiting for Ki low byte */
+	PROTO_STATE_WAIT_P_KI_CRC,             /**< Waiting for CRC byte (SET_P_KI) */
 	PROTO_STATE_WAIT_P_FF_CRC,             /**< Waiting for CRC byte (SET_FEED_FORWARD) */
 	PROTO_STATE_WAIT_P_STREAM_RATE_H,      /**< Waiting for stream rate high byte */
 	PROTO_STATE_WAIT_P_STREAM_RATE_L,      /**< Waiting for stream rate low byte */
@@ -172,35 +181,42 @@ typedef int (*proto_stream_stop_cb)(void);
  * ========================================================================= */
 
 /**
- * @brief Callback type for set P-controller mode
+ * @brief Callback type for set PI-controller mode
  *
  * @param mode Mode (0=MANUAL, 1=AUTO)
  */
 typedef void (*proto_set_mode_cb)(uint8_t mode);
 
 /**
- * @brief Callback type for set P-controller setpoint
+ * @brief Callback type for set PI-controller setpoint
  *
  * @param setpoint Target ADC value (0-4095)
  */
 typedef void (*proto_set_p_setpoint_cb)(uint16_t setpoint);
 
 /**
- * @brief Callback type for set P-controller gain
+ * @brief Callback type for set PI-controller gain
  *
- * @param gain Gain value (0-1000, represents 0.0-10.0)
+ * @param gain Proportional gain value (0-1000, represents 0.0-10.0)
  */
 typedef void (*proto_set_p_gain_cb)(uint16_t gain);
 
 /**
- * @brief Callback type for set P-controller feed-forward
+ * @brief Callback type for set PI-controller Ki (integral gain)
+ *
+ * @param ki Integral gain value (0-1000, represents 0.0-10.0)
+ */
+typedef void (*proto_set_p_ki_cb)(uint16_t ki);
+
+/**
+ * @brief Callback type for set PI-controller feed-forward
  *
  * @param ff Feed-forward PWM (0-100)
  */
 typedef void (*proto_set_feed_forward_cb)(uint8_t ff);
 
 /**
- * @brief Callback type for start P-controller streaming
+ * @brief Callback type for start PI-controller streaming
  *
  * @param rate_hz Streaming rate in Hz (max 1000)
  * @return 0 on success, negative on failure
@@ -208,14 +224,14 @@ typedef void (*proto_set_feed_forward_cb)(uint8_t ff);
 typedef int (*proto_start_p_stream_cb)(uint32_t rate_hz);
 
 /**
- * @brief Callback type for stop P-controller streaming
+ * @brief Callback type for stop PI-controller streaming
  *
  * @return 0 on success, negative on failure
  */
 typedef int (*proto_stop_p_stream_cb)(void);
 
 /**
- * @brief Callback type for get P-controller status
+ * @brief Callback type for get PI-controller status
  *
  * @return 0 on success, negative on failure
  */
@@ -281,26 +297,29 @@ struct proto_ctx {
 	/** Callback: Stop ADC streaming */
 	proto_stream_stop_cb on_stream_stop;
 
-	/* P-controller callbacks */
-	/** Callback: Set P-controller mode */
+	/* PI-controller callbacks */
+	/** Callback: Set PI-controller mode */
 	proto_set_mode_cb on_set_mode;
 
-	/** Callback: Set P-controller setpoint */
+	/** Callback: Set PI-controller setpoint */
 	proto_set_p_setpoint_cb on_set_p_setpoint;
 
-	/** Callback: Set P-controller gain */
+	/** Callback: Set PI-controller gain */
 	proto_set_p_gain_cb on_set_p_gain;
 
-	/** Callback: Set P-controller feed-forward */
+	/** Callback: Set PI-controller Ki (integral gain) */
+	proto_set_p_ki_cb on_set_p_ki;
+
+	/** Callback: Set PI-controller feed-forward */
 	proto_set_feed_forward_cb on_set_feed_forward;
 
-	/** Callback: Start P-controller streaming */
+	/** Callback: Start PI-controller streaming */
 	proto_start_p_stream_cb on_start_p_stream;
 
-	/** Callback: Stop P-controller streaming */
+	/** Callback: Stop PI-controller streaming */
 	proto_stop_p_stream_cb on_stop_p_stream;
 
-	/** Callback: Get P-controller status */
+	/** Callback: Get PI-controller status */
 	proto_get_p_status_cb on_get_p_status;
 
 	/** Callback: Send response byte */

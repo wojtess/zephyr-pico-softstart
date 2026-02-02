@@ -31,6 +31,7 @@ from protocol import (
     CMD_SET_MODE,
     CMD_SET_P_SETPOINT,
     CMD_SET_P_GAIN,
+    CMD_SET_P_KI,
     CMD_START_P_STREAM,
     CMD_STOP_P_STREAM,
     CMD_SET_FEED_FORWARD,
@@ -44,6 +45,7 @@ from protocol import (
     build_set_mode_frame,
     build_set_p_setpoint_frame,
     build_set_p_gain_frame,
+    build_set_p_ki_frame,
     build_set_feed_forward_frame,
     build_p_stream_start_frame,
     build_p_stream_stop_frame,
@@ -91,21 +93,21 @@ class LEDControllerApp:
         self._is_streaming: bool = False
         self._stream_interval: int = 100  # milliseconds
 
-        # P-Controller state
+        # PI-Controller state
         self._p_mode: int = 0  # 0=manual, 1=p_control
         self._p_setpoint: int = 0
         self._p_gain: float = 1.0
         self._p_feed_forward: int = 0
         self._p_streaming: bool = False
 
-        # History for P-controller plot (deques) - SEPARATE from ADC stream!
+        # History for PI-controller plot (deques) - SEPARATE from ADC stream!
         self._p_time_history = deque(maxlen=self._adc_max_points)
         self._p_measured_history = deque(maxlen=self._adc_max_points)
         self._setpoint_history = deque(maxlen=self._adc_max_points)
         self._pwm_history = deque(maxlen=self._adc_max_points)
         self._error_history = deque(maxlen=self._adc_max_points)
 
-        # P-Controller recording state
+        # PI-Controller recording state
         self._p_recording: bool = False
         self._p_record_start_time: float = 0.0
         self._p_record_file = None
@@ -358,6 +360,9 @@ class LEDControllerApp:
 
                 elif task.command == SerialCommand.SET_P_GAIN:
                     result = self._handle_set_p_gain(task.p_gain)
+
+                elif task.command == SerialCommand.SET_P_KI:
+                    result = self._handle_set_p_ki(task.p_ki)
 
                 elif task.command == SerialCommand.SET_P_FEED_FORWARD:
                     result = self._handle_set_p_feed_forward(task.p_feed_forward)
@@ -986,7 +991,7 @@ class LEDControllerApp:
                 with self._lock:
                     self._p_mode = mode
                 logger.info(f"SET_P_MODE: ACK - Mode set to {mode}")
-                return SerialResult(cmd, True, f"Mode set to {'Manual' if mode == 0 else 'P-Control'}")
+                return SerialResult(cmd, True, f"Mode set to {'Manual' if mode == 0 else 'PI-Control'}")
             else:  # RESP_NACK
                 error_name = get_error_name(err_code)
                 logger.warning(f"SET_P_MODE: NACK - {error_name}")
@@ -1120,7 +1125,7 @@ class LEDControllerApp:
                 with self._lock:
                     self._p_gain = gain
                 logger.info(f"SET_P_GAIN: ACK - Gain set to {gain}")
-                return SerialResult(cmd, True, f"P-Gain set to {gain:.2f}")
+                return SerialResult(cmd, True, f"PI-Gain set to {gain:.2f}")
             else:  # RESP_NACK
                 error_name = get_error_name(err_code)
                 logger.warning(f"SET_P_GAIN: NACK - {error_name}")
@@ -1141,6 +1146,71 @@ class LEDControllerApp:
 
         except Exception as e:
             logger.error(f"Unexpected error setting gain: {e}", exc_info=True)
+            return SerialResult(cmd, False, "Unexpected error", error=str(e))
+
+    def _handle_set_p_ki(self, ki: float) -> SerialResult:
+        """Handle set P Ki command in worker thread."""
+        cmd = SerialCommand.SET_P_KI
+        logger.info(f"SET_P_KI: ki={ki}")
+
+        try:
+            with self._lock:
+                if not self._serial_connection or not self._serial_connection.is_open:
+                    logger.warning("SET_P_KI: Not connected")
+                    return SerialResult(cmd, False, "Not connected", error="No connection")
+
+                # Validate Ki range
+                if not (0.0 <= ki <= 10.0):
+                    logger.warning(f"SET_P_KI: Invalid Ki {ki}")
+                    return SerialResult(cmd, False, "Invalid Ki (0.0-10.0)", error="Invalid value")
+
+                # Build and send frame
+                frame = build_set_p_ki_frame(ki)
+                logger.info(f"SET_P_KI: sending frame: {frame.hex()}")
+
+                self._serial_connection.write(frame)
+                self._serial_connection.flush()
+
+            # Read response from response queue: 1 byte (ACK/NACK)
+            try:
+                resp_type = self._response_queue.get(timeout=2.0)
+            except queue.Empty:
+                logger.error("SET_P_KI: No response from device (timeout)")
+                return SerialResult(cmd, False, "Device not responding (timeout)", error="Timeout")
+
+            # If NACK, read error code byte
+            err_code = 0
+            if resp_type == RESP_NACK:
+                try:
+                    err_code = self._response_queue.get(timeout=1.0)
+                except queue.Empty:
+                    logger.warning("SET_P_KI: NACK received but no error code")
+
+            logger.info(f"SET_P_KI: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
+
+            if resp_type == RESP_ACK:
+                logger.info(f"SET_P_KI: ACK - Ki set to {ki}")
+                return SerialResult(cmd, True, f"PI-Ki set to {ki:.2f}")
+            else:  # RESP_NACK
+                error_name = get_error_name(err_code)
+                logger.warning(f"SET_P_KI: NACK - {error_name}")
+                return SerialResult(cmd, False, f"Set Ki failed: {error_name}", error=error_name)
+
+        except serial.SerialException as e:
+            error_msg = str(e)
+            if "device disconnected" in error_msg.lower():
+                with self._lock:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+                logger.warning("Device disconnected during set Ki")
+                return SerialResult(cmd, False, "Device disconnected", error="Disconnected")
+            else:
+                logger.error(f"Serial error: {e}")
+                return SerialResult(cmd, False, "Communication error", error=str(e))
+
+        except Exception as e:
+            logger.error(f"Unexpected error setting Ki: {e}", exc_info=True)
             return SerialResult(cmd, False, "Unexpected error", error=str(e))
 
     def _handle_set_p_feed_forward(self, ff: int) -> SerialResult:

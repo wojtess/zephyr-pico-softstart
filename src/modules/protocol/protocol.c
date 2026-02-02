@@ -67,6 +67,7 @@ void proto_init(struct proto_ctx *ctx)
 	ctx->on_set_mode = NULL;
 	ctx->on_set_p_setpoint = NULL;
 	ctx->on_set_p_gain = NULL;
+	ctx->on_set_p_ki = NULL;
 	ctx->on_set_feed_forward = NULL;
 	ctx->on_start_p_stream = NULL;
 	ctx->on_stop_p_stream = NULL;
@@ -116,7 +117,7 @@ void proto_process_byte(struct proto_ctx *ctx, uint8_t byte)
 			ctx->frame_buf[0] = byte;
 			ctx->state = PROTO_STATE_WAIT_STOP_STREAM_CRC;
 		}
-		/* P-controller commands */
+		/* PI-controller commands */
 		else if (byte == PROTO_CMD_SET_MODE) {
 			ctx->frame_buf[0] = byte;
 			ctx->state = PROTO_STATE_WAIT_VALUE;
@@ -128,6 +129,10 @@ void proto_process_byte(struct proto_ctx *ctx, uint8_t byte)
 		else if (byte == PROTO_CMD_SET_P_GAIN) {
 			ctx->frame_buf[0] = byte;
 			ctx->state = PROTO_STATE_WAIT_P_GAIN_H;
+		}
+		else if (byte == PROTO_CMD_SET_P_KI) {
+			ctx->frame_buf[0] = byte;
+			ctx->state = PROTO_STATE_WAIT_P_KI_H;
 		}
 		else if (byte == PROTO_CMD_SET_FEED_FORWARD) {
 			ctx->frame_buf[0] = byte;
@@ -355,7 +360,7 @@ void proto_process_byte(struct proto_ctx *ctx, uint8_t byte)
 		break;
 	}
 
-	/* P-controller states */
+	/* PI-controller states */
 	case PROTO_STATE_WAIT_P_SETPOINT_H:
 		/* Store setpoint high byte */
 		ctx->frame_buf[1] = byte;
@@ -404,6 +409,59 @@ void proto_process_byte(struct proto_ctx *ctx, uint8_t byte)
 		break;
 
 	case PROTO_STATE_WAIT_P_GAIN_L:
+		/* Store gain low byte */
+		ctx->frame_buf[2] = byte;
+		ctx->state = PROTO_STATE_WAIT_P_GAIN_CRC;
+		break;
+
+	case PROTO_STATE_WAIT_P_KI_H:
+		/* Store Ki high byte */
+		ctx->frame_buf[1] = byte;
+		ctx->state = PROTO_STATE_WAIT_P_KI_L;
+		break;
+
+	case PROTO_STATE_WAIT_P_KI_L:
+		/* Store Ki low byte */
+		ctx->frame_buf[2] = byte;
+		ctx->state = PROTO_STATE_WAIT_P_KI_CRC;
+		break;
+
+	case PROTO_STATE_WAIT_P_KI_CRC:
+	{
+		/* Verify CRC for 4-byte frame [CMD][KI_H][KI_L][CRC] */
+		uint8_t calculated_crc = proto_crc8(ctx->frame_buf, 3);
+		if (byte != calculated_crc) {
+			if (ctx->send_resp) {
+				ctx->send_resp(PROTO_RESP_NACK);
+				ctx->send_resp(PROTO_ERR_CRC);
+			}
+			ctx->state = PROTO_STATE_WAIT_CMD;
+			break;
+		}
+
+		/* Calculate Ki from 2 bytes */
+		uint16_t ki = (ctx->frame_buf[1] << 8) | ctx->frame_buf[2];
+
+		/* Validate Ki range (0-1000) */
+		if (ki > 1000) {
+			if (ctx->send_resp) {
+				ctx->send_resp(PROTO_RESP_NACK);
+				ctx->send_resp(PROTO_ERR_INVALID_KI);
+			}
+		} else {
+			/* Execute set Ki command */
+			if (ctx->on_set_p_ki) {
+				ctx->on_set_p_ki(ki);
+			}
+
+			if (ctx->send_resp) {
+				ctx->send_resp(PROTO_RESP_ACK);
+			}
+		}
+
+		ctx->state = PROTO_STATE_WAIT_CMD;
+		break;
+	}
 		/* Store gain low byte */
 		ctx->frame_buf[2] = byte;
 		ctx->state = PROTO_STATE_WAIT_P_GAIN_CRC;

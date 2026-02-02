@@ -32,11 +32,12 @@ CMD_READ_ADC = 0x03
 CMD_START_STREAM = 0x04
 CMD_STOP_STREAM = 0x05
 CMD_SET_MODE = 0x06  # Set mode (0=manual, 1=P-control)
-CMD_GET_P_STATUS = 0x0B  # Get P-controller status
-CMD_SET_P_SETPOINT = 0x07  # Set P-controller setpoint (0-4095)
-CMD_SET_P_GAIN = 0x08  # Set P-controller gain (float value sent as int scaled)
-CMD_START_P_STREAM = 0x09  # Start P-controller streaming
-CMD_STOP_P_STREAM = 0x0A  # Stop P-controller streaming
+CMD_GET_P_STATUS = 0x0B  # Get PI-controller status
+CMD_SET_P_SETPOINT = 0x07  # Set PI-controller setpoint (0-4095)
+CMD_SET_P_GAIN = 0x08  # Set PI-controller gain (float value sent as int scaled)
+CMD_SET_P_KI = 0x0D  # Set PI-controller Ki (integral gain, float value sent as int scaled)
+CMD_START_P_STREAM = 0x09  # Start PI-controller streaming
+CMD_STOP_P_STREAM = 0x0A  # Stop PI-controller streaming
 CMD_SET_FEED_FORWARD = 0x0C  # Set feed-forward PWM (0-100)
 
 RESP_ACK = 0xFF
@@ -50,6 +51,7 @@ ERR_INVALID_MODE = 0x10
 ERR_INVALID_SETPOINT = 0x11
 ERR_INVALID_GAIN = 0x12
 ERR_INVALID_FF = 0x13
+ERR_INVALID_KI = 0x14  # Invalid integral gain (Ki)
 
 
 def crc8(data: bytes) -> int:
@@ -264,7 +266,7 @@ def parse_stream_data(resp: bytes) -> Tuple[int, int]:
 
 
 def parse_p_stream_data(resp: bytes) -> Tuple[int, int, int, int]:
-    """Parse P-controller streaming data response from device
+    """Parse PI-controller streaming data response from device
 
     Response format: [CMD_START_P_STREAM][SP_H][SP_L][MEAS_H][MEAS_L][PWM][CRC8]
     - SP_H, SP_L: Setpoint (16-bit, 0-4095)
@@ -355,6 +357,28 @@ def build_set_p_gain_frame(gain: float) -> bytes:
     return cmd_gain + bytes([checksum])
 
 
+def build_set_p_ki_frame(ki: float) -> bytes:
+    """Build a set P Ki frame (4-byte frame)
+
+    Ki is sent as integer value * 100 (e.g., 1.5 -> 150) in 16-bit H/L format
+
+    Frame format: [CMD_SET_P_KI][KI_H][KI_L][CRC8]
+
+    Args:
+        ki: P integral gain value (0.0-10.0)
+
+    Returns:
+        Complete 4-byte frame
+    """
+    ki_int = int(ki * 100)
+    ki_int = max(0, min(1000, ki_int))  # Clamp to valid range
+    ki_h = (ki_int >> 8) & 0xFF
+    ki_l = ki_int & 0xFF
+    cmd_ki = bytes([CMD_SET_P_KI, ki_h, ki_l])
+    checksum = crc8(cmd_ki)
+    return cmd_ki + bytes([checksum])
+
+
 def build_set_feed_forward_frame(pwm: int) -> bytes:
     """Build a set feed-forward frame (3-byte frame)
 
@@ -404,7 +428,7 @@ def build_p_stream_stop_frame() -> bytes:
 
 
 def build_get_p_status_frame() -> bytes:
-    """Build a get P-controller status frame (2-byte frame)
+    """Build a get PI-controller status frame (2-byte frame)
 
     Frame format: [CMD_GET_P_STATUS][CRC8]
 
@@ -417,7 +441,7 @@ def build_get_p_status_frame() -> bytes:
 
 
 def parse_p_status_response(resp: bytes) -> Tuple[int, int, int, int]:
-    """Parse P-controller status response from device
+    """Parse PI-controller status response from device
 
     Response format: [CMD_GET_P_STATUS][MODE][SP_H][SP_L][PWM][CRC8]
     - MODE: Operation mode (0=manual, 1=auto)

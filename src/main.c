@@ -3,7 +3,7 @@
  * @brief RP2040 PWM LED Control with P-Controller via UART ACM Binary Protocol
  *
  * @details This firmware implements a PWM-based LED control system for RP2040
- *          with P-controller for automatic current regulation.
+ *          with PI-controller for automatic current regulation.
  *
  * **Hardware Platform:**
  *   - MCU: RP2040 (Raspberry Pi Pico)
@@ -27,7 +27,7 @@
  *
  * **P-Controller Operation:**
  *   - Mode 0 (MANUAL): PWM controlled by GUI via SET_PWM (0x02)
- *   - Mode 1 (AUTO): P-controller calculates PWM automatically
+ *   - Mode 1 (AUTO): PI-controller calculates PWM automatically
  *   - Formula: PWM = feed_forward + (Kp * (setpoint - measured)) / 100
  *   - Control loop runs at 1kHz (1ms interval)
  *
@@ -105,7 +105,7 @@ static struct adc_ctrl_ctx g_adc;
 /** @brief ADC reader context (shared ADC source) */
 static struct adc_reader_ctx g_adc_reader;
 
-/** @brief P-controller context */
+/** @brief PI-controller context */
 static struct p_ctrl_ctx g_p_ctrl;
 
 /* =========================================================================
@@ -230,7 +230,7 @@ static int stream_stop_cb(void)
  * ========================================================================= */
 
 /**
- * @brief Wrapper for PWM set (matches P-controller callback signature)
+ * @brief Wrapper for PWM set (matches PI-controller callback signature)
  *
  * @param duty PWM duty cycle (0-100)
  */
@@ -254,7 +254,7 @@ static void proto_send_p_stream_data(uint16_t setpoint, uint16_t measured, uint8
 }
 
 /**
- * @brief Set P-controller mode callback
+ * @brief Set PI-controller mode callback
  *
  * @param mode 0=MANUAL, 1=AUTO
  */
@@ -264,7 +264,7 @@ static void p_ctrl_set_mode_cb(uint8_t mode)
 }
 
 /**
- * @brief Set P-controller setpoint callback
+ * @brief Set PI-controller setpoint callback
  *
  * @param setpoint Target ADC value (0-4095)
  */
@@ -274,9 +274,9 @@ static void p_ctrl_set_setpoint_cb(uint16_t setpoint)
 }
 
 /**
- * @brief Set P-controller gain callback
+ * @brief Set PI-controller gain callback
  *
- * @param gain Gain value (0-1000, represents 0.0-10.0)
+ * @param gain Proportional gain value (0-1000, represents 0.0-10.0)
  */
 static void p_ctrl_set_gain_cb(uint16_t gain)
 {
@@ -284,7 +284,17 @@ static void p_ctrl_set_gain_cb(uint16_t gain)
 }
 
 /**
- * @brief Set P-controller feed-forward callback
+ * @brief Set PI-controller Ki (integral gain) callback
+ *
+ * @param ki Integral gain value (0-1000, represents 0.0-10.0)
+ */
+static void p_ctrl_set_ki_cb(uint16_t ki)
+{
+	p_ctrl_set_ki(&g_p_ctrl, ki);
+}
+
+/**
+ * @brief Set PI-controller feed-forward callback
  *
  * @param ff Feed-forward PWM (0-100)
  */
@@ -294,7 +304,7 @@ static void p_ctrl_set_feed_forward_cb(uint8_t ff)
 }
 
 /**
- * @brief Start P-controller streaming callback
+ * @brief Start PI-controller streaming callback
  *
  * @param rate_hz Streaming rate in Hz (max 1000)
  * @return 0 on success, negative on failure
@@ -305,7 +315,7 @@ static int p_ctrl_start_stream_cb(uint32_t rate_hz)
 }
 
 /**
- * @brief Stop P-controller streaming callback
+ * @brief Stop PI-controller streaming callback
  *
  * @return 0 on success, negative on failure
  */
@@ -315,7 +325,7 @@ static int p_ctrl_stop_stream_cb(void)
 }
 
 /**
- * @brief Get P-controller status callback
+ * @brief Get PI-controller status callback
  *
  * @return 0 on success (sends response via proto_send_p_stream_data)
  */
@@ -439,19 +449,19 @@ int main(void)
 	/* Set ADC reader for streaming module */
 	adc_stream_set_adc_reader(&g_adc_stream, &g_adc_reader);
 
-	/* Initialize P-controller */
+	/* Initialize PI-controller */
 	if (p_ctrl_init(&g_p_ctrl) != 0) {
-		printk("ERROR: Failed to initialize P-controller\n");
+		printk("ERROR: Failed to initialize PI-controller\n");
 		return 0;
 	}
-	printk("P-controller initialized (MANUAL mode)\n");
+	printk("PI-controller initialized (MANUAL mode)\n");
 
-	/* Register P-controller callbacks (PWM and stream data only) */
+	/* Register PI-controller callbacks (PWM and stream data only) */
 	p_ctrl_set_callbacks(&g_p_ctrl,
 			     led_pwm_set_duty_wrapper,
 			     proto_send_p_stream_data);
 
-	/* Set ADC reader for P-controller */
+	/* Set ADC reader for PI-controller */
 	p_ctrl_set_adc_reader(&g_p_ctrl, &g_adc_reader);
 
 	/* Initialize RX ring buffer */
@@ -487,10 +497,11 @@ int main(void)
 	g_proto.on_adc_read = adc_read_cb;
 	g_proto.on_stream_start = stream_start_cb;
 	g_proto.on_stream_stop = stream_stop_cb;
-	/* P-controller callbacks */
+	/* PI-controller callbacks */
 	g_proto.on_set_mode = p_ctrl_set_mode_cb;
 	g_proto.on_set_p_setpoint = p_ctrl_set_setpoint_cb;
 	g_proto.on_set_p_gain = p_ctrl_set_gain_cb;
+	g_proto.on_set_p_ki = p_ctrl_set_ki_cb;
 	g_proto.on_set_feed_forward = p_ctrl_set_feed_forward_cb;
 	g_proto.on_start_p_stream = p_ctrl_start_stream_cb;
 	g_proto.on_stop_p_stream = p_ctrl_stop_stream_cb;

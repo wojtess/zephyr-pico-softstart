@@ -345,7 +345,7 @@ def on_stream_stop_clicked(sender, app_data, user_data: LEDControllerApp) -> Non
 
 
 def on_p_mode_changed(sender, app_data, user_data: LEDControllerApp) -> None:
-    """Handle mode switch (Manual <-> P-Control)."""
+    """Handle mode switch (Manual <-> PI-Control)."""
     # app_data is the selected item name (string) from radio_button items
     # Use constants P_MODE_MANUAL ("M") and P_MODE_AUTO ("P")
     if app_data == P_MODE_MANUAL:
@@ -356,7 +356,7 @@ def on_p_mode_changed(sender, app_data, user_data: LEDControllerApp) -> None:
         logger.error(f"Invalid mode string: {app_data}")
         return
 
-    logger.info(f"P-Mode changed to {app_data} ({mode})")
+    logger.info(f"PI-Mode changed to {app_data} ({mode})")
 
     # Send command to device
     task = SerialTask(command=SerialCommand.SET_P_MODE, p_mode=mode)
@@ -368,21 +368,21 @@ def on_p_mode_changed(sender, app_data, user_data: LEDControllerApp) -> None:
             result = result_queue.get(timeout=2)
 
             if result.success:
-                mode_name = "Manual" if mode == 0 else "P-Control"
+                mode_name = "Manual" if mode == 0 else "PI-Control"
                 update_status(f"Mode set to {mode_name}", [100, 200, 100])
                 update_last_response(f"ACK: {mode_name} mode")
 
                 # Enable/disable PWM slider based on mode
-                # In P-Control mode, PWM is calculated by firmware, not manual slider
+                # In PI-Control mode, PWM is calculated by firmware, not manual slider
                 if dpg.does_item_exist(TAGS["pwm_slider"]):
-                    if mode == 1:  # P-Control mode
+                    if mode == 1:  # PI-Control mode
                         dpg.configure_item(TAGS["pwm_slider"], enabled=False)
                     else:  # Manual mode
                         dpg.configure_item(TAGS["pwm_slider"], enabled=True)
 
                 # When switching to AUTO mode, sync gain and feed_forward to firmware
                 # This ensures firmware values match GUI slider positions
-                if mode == 1:  # P-Control (AUTO) mode
+                if mode == 1:  # PI-Control (AUTO) mode
                     sync_p_params_to_firmware(user_data)
 
             else:
@@ -409,7 +409,7 @@ def on_p_mode_changed(sender, app_data, user_data: LEDControllerApp) -> None:
 def on_p_setpoint_changed(sender, app_data, user_data: LEDControllerApp) -> None:
     """Handle setpoint input/slider change."""
     setpoint = app_data  # app_data contains the new setpoint value
-    logger.info(f"P-Setpoint changed to {setpoint}")
+    logger.info(f"PI-Setpoint changed to {setpoint}")
 
     # Sync slider and input
     if sender == TAGS["p_setpoint_slider"]:
@@ -451,7 +451,7 @@ def on_p_setpoint_changed(sender, app_data, user_data: LEDControllerApp) -> None
 def on_p_setpoint_step_clicked(sender, app_data, user_data: tuple) -> None:
     """Handle setpoint step button click (-100, -1, +1, +100)."""
     app, step = user_data  # Unpack (app, step_value)
-    logger.info(f"P-Setpoint step by {step}")
+    logger.info(f"PI-Setpoint step by {step}")
 
     # Get current value, apply step, clamp to valid range
     current = dpg.get_value(TAGS["p_setpoint_input"])
@@ -467,7 +467,7 @@ def on_p_setpoint_step_clicked(sender, app_data, user_data: tuple) -> None:
 def on_p_gain_changed(sender, app_data, user_data: LEDControllerApp) -> None:
     """Handle P-gain slider change."""
     gain = app_data  # app_data contains the new gain value
-    logger.info(f"P-Gain slider changed to {gain:.2f}")
+    logger.info(f"PI-Gain slider changed to {gain:.2f}")
 
     # Update label
     if dpg.does_item_exist(TAGS["p_gain_label"]):
@@ -506,7 +506,7 @@ def on_p_gain_changed(sender, app_data, user_data: LEDControllerApp) -> None:
 def on_p_gain_input_changed(sender, app_data, user_data: LEDControllerApp) -> None:
     """Handle P-gain input field change."""
     gain = max(0.0, min(10.0, app_data))  # Clamp
-    logger.info(f"P-Gain input changed to {gain:.2f}")
+    logger.info(f"PI-Gain input changed to {gain:.2f}")
 
     # Update slider
     if dpg.does_item_exist(TAGS["p_gain_slider"]):
@@ -538,10 +538,84 @@ def on_p_gain_input_changed(sender, app_data, user_data: LEDControllerApp) -> No
     threading.Thread(target=check_gain, daemon=True).start()
 
 
+def on_p_ki_changed(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Handle PI-Ki slider change."""
+    ki = app_data  # app_data contains the new Ki value
+    logger.info(f"PI-Ki slider changed to {ki:.2f}")
+
+    # Update label
+    if dpg.does_item_exist(TAGS["p_ki_label"]):
+        dpg.set_value(TAGS["p_ki_label"], f"{ki:.2f}")
+
+    # Update input field to match slider
+    if dpg.does_item_exist(TAGS["p_ki_input"]):
+        dpg.set_value(TAGS["p_ki_input"], ki)
+
+    # Send command to device
+    task = SerialTask(command=SerialCommand.SET_P_KI, p_ki=ki)
+    result_queue = user_data.send_task(task)
+
+    # Check result in background thread
+    def check_ki():
+        try:
+            result = result_queue.get(timeout=2)
+
+            if result.success:
+                update_status(f"Ki set to {ki:.2f}", [100, 200, 100])
+                update_last_response(f"ACK: Ki={ki:.2f}")
+            else:
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+
+                update_status(f"Ki error: {result.message}", [255, 100, 100])
+                update_last_response(f"NACK: {result.error or 'Unknown'}")
+
+        except queue.Empty:
+            update_status("Ki change timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_ki, daemon=True).start()
+
+
+def on_p_ki_input_changed(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Handle PI-Ki input field change."""
+    ki = max(0.0, min(10.0, app_data))  # Clamp
+    logger.info(f"PI-Ki input changed to {ki:.2f}")
+
+    # Update slider
+    if dpg.does_item_exist(TAGS["p_ki_slider"]):
+        dpg.set_value(TAGS["p_ki_slider"], ki)
+
+    # Send command to device
+    task = SerialTask(command=SerialCommand.SET_P_KI, p_ki=ki)
+    result_queue = user_data.send_task(task)
+
+    # Check result in background thread
+    def check_ki():
+        try:
+            result = result_queue.get(timeout=2)
+
+            if result.success:
+                update_status(f"Ki set to {ki:.2f}", [100, 200, 100])
+                update_last_response(f"ACK: Ki={ki:.2f}")
+            else:
+                if result.error == "Disconnected" or result.error == "Timeout":
+                    handle_disconnect_state(user_data)
+
+                update_status(f"Ki error: {result.message}", [255, 100, 100])
+                update_last_response(f"NACK: {result.error or 'Unknown'}")
+
+        except queue.Empty:
+            update_status("Ki change timeout", [255, 150, 50])
+            update_last_response("Timeout")
+
+    threading.Thread(target=check_ki, daemon=True).start()
+
+
 def on_p_ff_changed(sender, app_data, user_data: LEDControllerApp) -> None:
     """Handle P feed-forward slider change."""
     ff = app_data  # 0-100 PWM percent
-    logger.info(f"P-Feed-Forward slider changed to {ff}%")
+    logger.info(f"PI-FeedForward slider changed to {ff}%")
 
     # Update input field to match slider
     if dpg.does_item_exist(TAGS["p_ff_input"]):
@@ -609,10 +683,10 @@ def on_p_ff_input_changed(sender, app_data, user_data: LEDControllerApp) -> None
 
 def sync_p_params_to_firmware(app: LEDControllerApp) -> None:
     """
-    Sync current P-controller parameters (gain, feed_forward) from GUI to firmware.
+    Sync current PI-controller parameters (gain, ki, feed_forward) from GUI to firmware.
 
     Called when switching to AUTO mode to ensure firmware values match GUI sliders.
-    Without this, firmware would use gain=0 and feed_forward=0 (defaults), causing
+    Without this, firmware would use gain=0, ki=0 and feed_forward=0 (defaults), causing
     PWM output to always be 0 regardless of error.
     """
     # Get current gain value from slider
@@ -620,23 +694,32 @@ def sync_p_params_to_firmware(app: LEDControllerApp) -> None:
     if dpg.exists(TAGS["p_gain_slider"]):
         gain = dpg.get_value(TAGS["p_gain_slider"])
 
+    # Get current Ki value from slider
+    ki = 0.0  # default
+    if dpg.exists(TAGS["p_ki_slider"]):
+        ki = dpg.get_value(TAGS["p_ki_slider"])
+
     # Get current feed-forward value from slider
     ff = 0  # default
     if dpg.exists(TAGS["p_ff_slider"]):
         ff = dpg.get_value(TAGS["p_ff_slider"])
 
-    logger.info(f"Syncing P-params to firmware: gain={gain:.2f}, ff={ff}%")
+    logger.info(f"Syncing PI-params to firmware: gain={gain:.2f}, ki={ki:.2f}, ff={ff}%")
 
     # Send gain command
     task_gain = SerialTask(command=SerialCommand.SET_P_GAIN, p_gain=gain)
     result_gain = app.send_task(task_gain)
 
+    # Send Ki command
+    task_ki = SerialTask(command=SerialCommand.SET_P_KI, p_ki=ki)
+    result_ki = app.send_task(task_ki)
+
     # Send feed-forward command
     task_ff = SerialTask(command=SerialCommand.SET_P_FEED_FORWARD, p_feed_forward=ff)
     result_ff = app.send_task(task_ff)
 
-    # Check both results
-    for result, label, value in [(result_gain, "Gain", gain), (result_ff, "FF", ff)]:
+    # Check all results
+    for result, label, value in [(result_gain, "Gain", gain), (result_ki, "Ki", ki), (result_ff, "FF", ff)]:
         try:
             result = result.get(timeout=2)
             if result and result.success:
@@ -754,7 +837,7 @@ def on_p_stream_stop_clicked(sender, app_data, user_data: LEDControllerApp) -> N
 
                 # Update status
                 if dpg.does_item_exist(TAGS["p_stream_status"]):
-                    dpg.set_value(TAGS["p_stream_status"], "P-Stream: Stopped")
+                    dpg.set_value(TAGS["p_stream_status"], "PI-Stream: Stopped")
                     dpg.configure_item(TAGS["p_stream_status"], color=[150, 150, 150])
 
             else:
@@ -939,9 +1022,9 @@ def on_led_slider_changed(sender, app_data, user_data: LEDControllerApp) -> None
 
 
 def on_p_stream_enable_changed(sender, app_data, user_data: LEDControllerApp) -> None:
-    """Callback for P-Stream enable checkbox."""
+    """Callback for PI-Stream enable checkbox."""
     enabled = bool(app_data)
-    logger.info(f"P-Stream enable changed to {enabled}")
+    logger.info(f"PI-Stream enable changed to {enabled}")
 
     if enabled:
         # Start streaming
