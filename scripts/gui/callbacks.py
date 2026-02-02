@@ -11,7 +11,12 @@ from typing import Optional
 import serial
 import dearpygui.dearpygui as dpg
 
-from .constants import TAGS, SerialCommand, SerialTask, P_MODE_MANUAL, P_MODE_AUTO
+from .constants import (
+    TAGS, SerialCommand, SerialTask,
+    P_MODE_MANUAL, P_MODE_AUTO, P_MODE_AUTOTUNE,
+    TUNE_STATE_IDLE, TUNE_STATE_COMPLETE, TUNE_STATE_ERROR,
+    TUNE_DEFAULT_PWM_LOW, TUNE_DEFAULT_PWM_HIGH
+)
 from .app import LEDControllerApp, ADC_TO_AMPS
 from .utils import (
     find_ports_with_info,
@@ -345,9 +350,23 @@ def on_stream_stop_clicked(sender, app_data, user_data: LEDControllerApp) -> Non
 
 
 def on_p_mode_changed(sender, app_data, user_data: LEDControllerApp) -> None:
-    """Handle mode switch (Manual <-> PI-Control)."""
+    """Handle mode switch (Manual <-> PI-Control <-> Autotune)."""
     # app_data is the selected item name (string) from radio_button items
-    # Use constants P_MODE_MANUAL ("M") and P_MODE_AUTO ("P")
+    # Use constants P_MODE_MANUAL ("M"), P_MODE_AUTO ("P"), P_MODE_AUTOTUNE ("T")
+
+    # Handle AUTOTUNE mode - triggers autotune process instead of firmware mode change
+    if app_data == P_MODE_AUTOTUNE:
+        logger.info("AUTOTUNE mode selected - triggering autotune process")
+        # Trigger the autotune start callback
+        # This will run the autotuning sequence and then switch to AUTO mode
+        on_autotune_start(sender, app_data, user_data)
+        # Revert radio button to current mode (autotune is a one-shot process, not a persistent mode)
+        if dpg.does_item_exist(TAGS["p_mode_radio"]):
+            current_mode = user_data._p_mode
+            dpg.set_value(TAGS["p_mode_radio"], P_MODE_MANUAL if current_mode == 0 else P_MODE_AUTO)
+        return
+
+    # Handle MANUAL and AUTO modes - send to firmware
     if app_data == P_MODE_MANUAL:
         mode = 0
     elif app_data == P_MODE_AUTO:
@@ -1105,3 +1124,99 @@ def on_filter_alpha_changed(sender, app_data, user_data: LEDControllerApp) -> No
             update_last_response("Timeout")
 
     threading.Thread(target=check_alpha, daemon=True).start()
+
+
+def on_autotune_start(sender, app_data, user_data: LEDControllerApp) -> None:
+    """Handle autotune start button click."""
+    logger.info("Autotune start button clicked")
+
+    # Disable button during tuning
+    if dpg.does_item_exist(TAGS["autotune_pwm_apply"]):
+        dpg.configure_item(TAGS["autotune_pwm_apply"], enabled=False)
+
+    # Get parameters from UI
+    pwm_low = TUNE_DEFAULT_PWM_LOW
+    pwm_high = TUNE_DEFAULT_PWM_HIGH
+
+    if dpg.does_item_exist(TAGS["autotune_pwm_low"]):
+        pwm_low = dpg.get_value(TAGS["autotune_pwm_low"])
+    if dpg.does_item_exist(TAGS["autotune_pwm_high"]):
+        pwm_high = dpg.get_value(TAGS["autotune_pwm_high"])
+
+    # Validate
+    if pwm_low >= pwm_high:
+        update_status("Invalid PWM range: low must be < high", [255, 100, 100])
+        if dpg.does_item_exist(TAGS["autotune_pwm_apply"]):
+            dpg.configure_item(TAGS["autotune_pwm_apply"], enabled=True)
+        return
+
+    update_status(f"Starting autotune: PWM {pwm_low}% -> {pwm_high}%", [200, 200, 100])
+
+    # Start tuning
+    autotuner = user_data.get_autotuner()
+    if not autotuner.start_tuning(pwm_low, pwm_high):
+        update_status("Failed to start autotuning", [255, 100, 100])
+        if dpg.does_item_exist(TAGS["autotune_pwm_apply"]):
+            dpg.configure_item(TAGS["autotune_pwm_apply"], enabled=True)
+        return
+
+    # Start status update thread
+    def update_autotune_status():
+        while autotuner.is_running():
+            state = autotuner.get_state()
+            progress = autotuner.get_progress()
+
+            # Update UI
+            if dpg.does_item_exist(TAGS["autotune_status"]):
+                dpg.set_value(TAGS["autotune_status"], state)
+                dpg.configure_item(TAGS["autotune_status"], color=[100, 200, 100])
+
+            if dpg.does_item_exist(TAGS["autotune_progress"]):
+                dpg.set_value(TAGS["autotune_progress"], progress)
+
+            time.sleep(0.1)
+
+        # Tuning complete
+        state = autotuner.get_state()
+        result = autotuner.get_result()
+        params = autotuner.get_params()
+        error = autotuner.get_error()
+
+        if state == TUNE_STATE_COMPLETE and result:
+            # Success - display results
+            if params:
+                if dpg.does_item_exist(TAGS["autotune_k_display"]):
+                    dpg.set_value(TAGS["autotune_k_display"], f"{params.K:.3f}")
+                if dpg.does_item_exist(TAGS["autotune_L_display"]):
+                    dpg.set_value(TAGS["autotune_L_display"], f"{params.L:.3f}s")
+                if dpg.does_item_exist(TAGS["autotune_T_display"]):
+                    dpg.set_value(TAGS["autotune_T_display"], f"{params.T:.3f}s")
+
+            if dpg.does_item_exist(TAGS["autotune_results"]):
+                dpg.set_value(TAGS["autotune_results"], f"Kp={result.kp:.3f} Ki={result.ki:.3f}")
+
+            update_status(f"Autotune complete: Kp={result.kp:.3f}, Ki={result.ki:.3f}", [100, 200, 100])
+
+            # Apply to GUI sliders
+            if dpg.does_item_exist(TAGS["p_gain_slider"]):
+                dpg.set_value(TAGS["p_gain_slider"], result.kp)
+            if dpg.does_item_exist(TAGS["p_ki_slider"]):
+                dpg.set_value(TAGS["p_ki_slider"], result.ki)
+
+            # Trigger callbacks to sync to firmware
+            on_p_gain_changed(TAGS["p_gain_slider"], result.kp, user_data)
+            on_p_ki_changed(TAGS["p_ki_slider"], result.ki, user_data)
+
+        elif state == TUNE_STATE_ERROR:
+            # Error
+            error_msg = error or "Unknown error"
+            update_status(f"Autotune failed: {error_msg}", [255, 100, 100])
+            if dpg.does_item_exist(TAGS["autotune_status"]):
+                dpg.set_value(TAGS["autotune_status"], f"Error: {error_msg}")
+                dpg.configure_item(TAGS["autotune_status"], color=[255, 100, 100])
+
+        # Re-enable button
+        if dpg.does_item_exist(TAGS["autotune_pwm_apply"]):
+            dpg.configure_item(TAGS["autotune_pwm_apply"], enabled=True)
+
+    threading.Thread(target=update_autotune_status, daemon=True).start()

@@ -26,6 +26,7 @@ class SerialCommand(Enum):
     START_P_STREAM = "start_p_stream"
     STOP_P_STREAM = "stop_p_stream"
     GET_P_STATUS = "get_p_status"
+    SET_FILTER_ALPHA = "set_filter_alpha"
     START_P_RECORD = "start_p_record"
     STOP_P_RECORD = "stop_p_record"
     QUIT = "quit"
@@ -47,6 +48,8 @@ class SerialTask:
     p_ki: Optional[float] = None
     p_feed_forward: Optional[int] = None
     p_stream_interval: Optional[int] = None  # For P-streaming (milliseconds)
+    filter_alpha_num: Optional[int] = None  # Filter alpha numerator (1-255)
+    filter_alpha_den: Optional[int] = None  # Filter alpha denominator (1-255)
 
 
 @dataclass
@@ -141,12 +144,50 @@ TAGS = {
     "p_analysis_filter_method": "combo_p_analysis_filter",
     "p_analysis_filter_window": "input_p_analysis_window",
     "p_analysis_time_range": "input_p_analysis_time_range",
-    "p_analysis_derived_metrics": "txt_p_analysis_derived_metrics"
+    "p_analysis_derived_metrics": "txt_p_analysis_derived_metrics",
+    # Filter alpha controls
+    "filter_alpha_input": "input_filter_alpha",
+    "filter_alpha_label": "txt_filter_alpha",
+    "filter_alpha_info": "txt_filter_alpha_info",
+    # Autotune UI elements
+    "autotune_status": "txt_autotune_status",
+    "autotune_progress": "prog_autotune",
+    "autotune_results": "txt_autotune_results",
+    "autotune_params": "grp_autotune_params",
+    "autotune_pwm_low": "input_autotune_pwm_low",
+    "autotune_pwm_high": "input_autotune_pwm_high",
+    "autotune_pwm_apply": "btn_autotune_apply",
+    "autotune_k_display": "txt_autotune_k",
+    "autotune_L_display": "txt_autotune_L",
+    "autotune_T_display": "txt_autotune_T"
 }
 
 # PI-Controller mode values (must match radio button items)
 P_MODE_MANUAL = "M"
 P_MODE_AUTO = "P"
+P_MODE_AUTOTUNE = "T"  # Automatic PI tuning mode
 
 # Tuple of valid mode strings for validation (immutable)
-P_MODE_VALUES = (P_MODE_MANUAL, P_MODE_AUTO)
+P_MODE_VALUES = (P_MODE_MANUAL, P_MODE_AUTO, P_MODE_AUTOTUNE)
+
+
+# =========================================================================
+# AUTOTUNE CONSTANTS
+# =========================================================================
+
+# Autotune state constants
+TUNE_STATE_IDLE = "idle"
+TUNE_STATE_PREPARING = "preparing"
+TUNE_STATE_STEP_UP = "step_up"
+TUNE_STATE_STEADY_STATE = "steady_state"
+TUNE_STATE_STEP_DOWN = "step_down"
+TUNE_STATE_COMPLETE = "complete"
+TUNE_STATE_ERROR = "error"
+
+# Default tuning parameters
+TUNE_DEFAULT_PWM_LOW = 20      # Starting PWM % for step test
+TUNE_DEFAULT_PWM_HIGH = 50     # Step PWM % for step test
+TUNE_MIN_DURATION = 5.0        # Minimum test duration (seconds)
+TUNE_STEADY_THRESHOLD = 0.02   # 2% variation for steady state detection
+TUNE_MAX_DURATION = 30.0       # Maximum test duration (seconds)
+TUNE_STABILITY_SAMPLES = 50    # Samples to confirm steady state

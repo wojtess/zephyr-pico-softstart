@@ -39,6 +39,7 @@ CMD_SET_P_KI = 0x0D  # Set PI-controller Ki (integral gain, float value sent as 
 CMD_START_P_STREAM = 0x09  # Start PI-controller streaming
 CMD_STOP_P_STREAM = 0x0A  # Stop PI-controller streaming
 CMD_SET_FEED_FORWARD = 0x0C  # Set feed-forward PWM (0-100)
+CMD_SET_FILTER_ALPHA = 0x0E  # Set IIR filter alpha (numerator/denominator)
 
 RESP_ACK = 0xFF
 RESP_NACK = 0xFE
@@ -438,6 +439,30 @@ def build_get_p_status_frame() -> bytes:
     cmd_byte = bytes([CMD_GET_P_STATUS])
     checksum = crc8(cmd_byte)
     return cmd_byte + bytes([checksum])
+
+
+def build_set_filter_alpha_frame(numerator: int, denominator: int) -> bytes:
+    """Build a set filter alpha frame (4-byte frame)
+
+    Frame format: [CMD_SET_FILTER_ALPHA][NUM][DEN][CRC8]
+
+    Args:
+        numerator: Alpha numerator (1-255)
+        denominator: Alpha denominator (1-255, power of 2 recommended)
+
+    Returns:
+        Complete 4-byte frame
+    """
+    if not (1 <= numerator <= 255):
+        raise ValueError(f"Numerator must be 1-255, got {numerator}")
+    if not (1 <= denominator <= 255):
+        raise ValueError(f"Denominator must be 1-255, got {denominator}")
+    if numerator > denominator:
+        raise ValueError(f"Numerator ({numerator}) must be <= denominator ({denominator})")
+
+    cmd_num_den = bytes([CMD_SET_FILTER_ALPHA, numerator, denominator])
+    checksum = crc8(cmd_num_den)
+    return cmd_num_den + bytes([checksum])
 
 
 def parse_p_status_response(resp: bytes) -> Tuple[int, int, int, int]:

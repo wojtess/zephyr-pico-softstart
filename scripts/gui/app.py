@@ -22,6 +22,7 @@ except ImportError:
     serial = None
 
 from .constants import SerialCommand, SerialTask, SerialResult
+from .autotuner import Autotuner
 from protocol import (
     CMD_SET_LED,
     CMD_SET_PWM,
@@ -35,6 +36,7 @@ from protocol import (
     CMD_START_P_STREAM,
     CMD_STOP_P_STREAM,
     CMD_SET_FEED_FORWARD,
+    CMD_SET_FILTER_ALPHA,
     RESP_ACK,
     RESP_NACK,
     RESP_DEBUG,
@@ -49,6 +51,7 @@ from protocol import (
     build_set_feed_forward_frame,
     build_p_stream_start_frame,
     build_p_stream_stop_frame,
+    build_set_filter_alpha_frame,
     parse_adc_response,
     parse_stream_data,
     parse_p_stream_data,
@@ -124,6 +127,9 @@ class LEDControllerApp:
         self._p_record_file = None
         self._p_record_data: list = []  # Buffer data, write periodically
 
+        # Autotuner instance
+        self._autotuner = Autotuner(self, ADC_TO_AMPS)
+
         # Command queue (visible in GUI) - pending tasks waiting to be processed
         self._pending_tasks: List[SerialTask] = []
         self._processing_task: Optional[SerialTask] = None
@@ -186,7 +192,6 @@ class LEDControllerApp:
                     continue
 
                 byte_val = byte_data[0]
-                logger.debug(f"Data reader: got byte 0x{byte_val:02X}, state={state}")
 
                 # State machine for parsing streaming data
                 if state == "WAIT_MARKER":
@@ -237,8 +242,6 @@ class LEDControllerApp:
                                 self._adc_time_history.pop(0)
                                 self._adc_raw_history.pop(0)
                                 self._adc_amps_history.pop(0)
-
-                        logger.debug(f"Stream data: raw={adc_raw}, amps={amps:.3f}A")
                     else:
                         logger.warning(f"CRC error in stream data: expected 0x{calc_crc:02X}, got 0x{byte_val:02X}")
 
@@ -389,6 +392,9 @@ class LEDControllerApp:
 
                 elif task.command == SerialCommand.STOP_P_RECORD:
                     result = self._handle_stop_p_record()
+
+                elif task.command == SerialCommand.SET_FILTER_ALPHA:
+                    result = self._handle_set_filter_alpha(task.filter_alpha_num, task.filter_alpha_den)
 
                 # After handler completes, check for leftover bytes in response queue
                 # This detects command collisions, double responses, or other protocol errors
@@ -546,7 +552,7 @@ class LEDControllerApp:
                 # Build and send frame
                 value = 1 if state else 0
                 frame = build_frame(CMD_SET_LED, value)
-                logger.debug(f"SEND_LED: sending frame: {frame.hex()}")
+                # logger.debug(f"SEND_LED: sending frame: {frame.hex()}")
 
                 self._serial_connection.write(frame)
                 self._serial_connection.flush()
@@ -576,7 +582,7 @@ class LEDControllerApp:
                 except queue.Empty:
                     logger.warning("SEND_LED: NACK received but no error code")
 
-            logger.info(f"SEND_LED: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
+            # logger.info(f"SEND_LED: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
 
             if resp_type == RESP_ACK:
                 with self._lock:
@@ -659,7 +665,7 @@ class LEDControllerApp:
 
                 # Build and send frame
                 frame = build_frame(CMD_SET_PWM, duty)
-                logger.debug(f"SEND_PWM: sending frame: {frame.hex()}")
+                # logger.debug(f"SEND_PWM: sending frame: {frame.hex()}")
 
                 self._serial_connection.write(frame)
                 self._serial_connection.flush()
@@ -690,7 +696,7 @@ class LEDControllerApp:
                 except queue.Empty:
                     logger.warning("SEND_PWM: NACK received but no error code")
 
-            logger.debug(f"SEND_PWM: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
+            # logger.debug(f"SEND_PWM: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
 
             if resp_type == RESP_ACK:
                 with self._lock:
@@ -763,7 +769,7 @@ class LEDControllerApp:
 
                 # Build and send ADC read frame
                 frame = build_adc_frame()
-                logger.info(f"READ_ADC: sending frame: {frame.hex()}")
+                # logger.info(f"READ_ADC: sending frame: {frame.hex()}")
 
                 self._serial_connection.write(frame)
                 self._serial_connection.flush()
@@ -782,7 +788,7 @@ class LEDControllerApp:
                     return SerialResult(cmd, False, "Device not responding (timeout)", error="Timeout")
 
             resp_bytes = bytes(resp)
-            logger.info(f"READ_ADC: received response: {resp_bytes.hex()}")
+            # logger.info(f"READ_ADC: received response: {resp_bytes.hex()}")
 
             # Parse ADC response
             adc_value, err_code = parse_adc_response(resp_bytes)
@@ -839,7 +845,7 @@ class LEDControllerApp:
 
                 # Build and send stream start frame
                 frame = build_stream_start_frame(interval_ms)
-                logger.info(f"START_STREAM: sending frame: {frame.hex()}")
+                # logger.info(f"START_STREAM: sending frame: {frame.hex()}")
 
                 self._serial_connection.write(frame)
                 self._serial_connection.flush()
@@ -1521,6 +1527,77 @@ class LEDControllerApp:
             logger.error(f"Unexpected error stopping recording: {e}", exc_info=True)
             return SerialResult(cmd, False, "Unexpected error", error=str(e))
 
+    def _handle_set_filter_alpha(self, num: int, den: int) -> SerialResult:
+        """Handle set filter alpha command in worker thread."""
+        cmd = SerialCommand.SET_FILTER_ALPHA
+        logger.info(f"SET_FILTER_ALPHA: alpha={num}/{den}")
+
+        try:
+            with self._lock:
+                if not self._serial_connection or not self._serial_connection.is_open:
+                    logger.warning("SET_FILTER_ALPHA: Not connected")
+                    return SerialResult(cmd, False, "Not connected", error="No connection")
+
+                # Validate alpha range
+                if not (1 <= num <= 255):
+                    logger.warning(f"SET_FILTER_ALPHA: Invalid numerator {num}")
+                    return SerialResult(cmd, False, "Invalid numerator (1-255)", error="Invalid value")
+                if not (1 <= den <= 255):
+                    logger.warning(f"SET_FILTER_ALPHA: Invalid denominator {den}")
+                    return SerialResult(cmd, False, "Invalid denominator (1-255)", error="Invalid value")
+                if num > den:
+                    logger.warning(f"SET_FILTER_ALPHA: numerator {num} > denominator {den}")
+                    return SerialResult(cmd, False, "Numerator must be <= denominator", error="Invalid value")
+
+                # Build and send frame
+                frame = build_set_filter_alpha_frame(num, den)
+                logger.info(f"SET_FILTER_ALPHA: sending frame: {frame.hex()}")
+
+                self._serial_connection.write(frame)
+                self._serial_connection.flush()
+
+            # Read response from response queue: 1 byte (ACK/NACK)
+            try:
+                resp_type = self._response_queue.get(timeout=2.0)
+            except queue.Empty:
+                logger.error("SET_FILTER_ALPHA: No response from device (timeout)")
+                return SerialResult(cmd, False, "Device not responding (timeout)", error="Timeout")
+
+            # If NACK, read error code byte
+            err_code = 0
+            if resp_type == RESP_NACK:
+                try:
+                    err_code = self._response_queue.get(timeout=1.0)
+                except queue.Empty:
+                    logger.warning("SET_FILTER_ALPHA: NACK received but no error code")
+
+            logger.info(f"SET_FILTER_ALPHA: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
+
+            if resp_type == RESP_ACK:
+                logger.info(f"SET_FILTER_ALPHA: ACK - Filter alpha set to {num}/{den}")
+                return SerialResult(cmd, True, f"Filter alpha set to {num}/{den}")
+            else:  # RESP_NACK
+                error_name = get_error_name(err_code)
+                logger.warning(f"SET_FILTER_ALPHA: NACK - {error_name}")
+                return SerialResult(cmd, False, f"Set filter alpha failed: {error_name}", error=error_name)
+
+        except serial.SerialException as e:
+            error_msg = str(e)
+            if "device disconnected" in error_msg.lower():
+                with self._lock:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+                logger.warning("Device disconnected during set filter alpha")
+                return SerialResult(cmd, False, "Device disconnected", error="Disconnected")
+            else:
+                logger.error(f"Serial error: {e}")
+                return SerialResult(cmd, False, "Communication error", error=str(e))
+
+        except Exception as e:
+            logger.error(f"Unexpected error setting filter alpha: {e}", exc_info=True)
+            return SerialResult(cmd, False, "Unexpected error", error=str(e))
+
     # NOTE: Stream worker removed - only ONE thread can access serial!
     # Streaming data will be parsed in main worker loop when _is_streaming is True
 
@@ -1705,6 +1782,10 @@ class LEDControllerApp:
         """Get list of pending task names."""
         with self._lock:
             return [t.command.value for t in self._pending_tasks]
+
+    def get_autotuner(self) -> Autotuner:
+        """Get autotuner instance."""
+        return self._autotuner
 
     # ========== Setter methods for state tracking ==========
 

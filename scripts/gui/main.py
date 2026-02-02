@@ -37,7 +37,7 @@ except ImportError as e:
     sys.exit(1)
 
 # Use absolute imports to work both as module and direct script
-from gui.app import LEDControllerApp
+from gui.app import LEDControllerApp, ADC_TO_AMPS
 from gui.constants import TAGS
 from gui.widgets import create_main_window
 from gui.utils import find_ports_with_info, update_status
@@ -97,9 +97,9 @@ def main() -> int:
                     # Update P-Stream plot (when P-streaming is active)
                     if app.is_p_streaming():
                         x_axis, raw_series, amps_series = app.get_p_stream_history()
-                        setpoint_series = list(app._setpoint_history)
+                        setpoint_series = [s * ADC_TO_AMPS for s in app._setpoint_history]
                         pwm_series = list(app._pwm_history)
-                        error_series = list(app._error_history)
+                        error_series = [e * ADC_TO_AMPS for e in app._error_history]
 
                         # Update P-stream plot
                         if dpg.does_item_exist(TAGS["p_stream_plot"]):

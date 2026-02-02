@@ -28,6 +28,8 @@ from .callbacks import (
     on_p_stream_enable_changed,
     on_p_record_enable_changed,
     on_adc_stream_enable_changed,
+    on_filter_alpha_changed,
+    on_autotune_start,
 )
 from .utils import find_ports_with_info, update_status
 
@@ -125,6 +127,12 @@ def create_main_window(app: LEDControllerApp) -> None:
                 dpg.add_text("ADC Stream:")
                 dpg.add_checkbox(label="Enable", tag=TAGS["adc_stream_enable_chk"], default_value=False, callback=on_adc_stream_enable_changed, user_data=app)
 
+                dpg.add_spacer(height=3)
+                dpg.add_text("Filter Alpha (α):")
+                dpg.add_slider_int(tag=TAGS["filter_alpha_input"], default_value=1, min_value=1, max_value=255, clamped=True, width=-1, callback=on_filter_alpha_changed, user_data=app)
+                dpg.add_text(tag=TAGS["filter_alpha_label"], default_value="α = 1/256 = 0.0039", color=[100, 200, 255])
+                dpg.add_text(tag=TAGS["filter_alpha_info"], default_value="fc ≈ 12Hz", color=[150, 150, 150])
+
                 dpg.add_spacer(height=8)
 
                 # P-CONTROLLER
@@ -159,6 +167,47 @@ def create_main_window(app: LEDControllerApp) -> None:
                 with dpg.group(horizontal=True):
                     dpg.add_text("PWM out:")
                     dpg.add_text(tag=TAGS["p_pwm_output"], default_value="--", color=[100, 255, 100])
+
+                dpg.add_spacer(height=8)
+
+                # AUTOTUNE
+                dpg.add_text("--- AUTOTUNE ---", color=[150, 150, 180])
+                dpg.add_spacer(height=2)
+
+                with dpg.group(tag=TAGS["autotune_params"]):
+                    dpg.add_text("Step Test Parameters:")
+
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("PWM Low (%):")
+                        dpg.add_input_int(tag=TAGS["autotune_pwm_low"], default_value=20, min_value=0, max_value=99, width=80)
+
+                    with dpg.group(horizontal=True):
+                        dpg.add_text("PWM High (%):")
+                        dpg.add_input_int(tag=TAGS["autotune_pwm_high"], default_value=50, min_value=1, max_value=100, width=80)
+
+                    dpg.add_spacer(height=3)
+                    dpg.add_button(label="Start Autotune", tag=TAGS["autotune_pwm_apply"], callback=on_autotune_start, user_data=app, width=-1)
+
+                dpg.add_spacer(height=3)
+                dpg.add_text("Status:")
+                dpg.add_text(tag=TAGS["autotune_status"], default_value="Idle", color=[150, 150, 150])
+
+                dpg.add_spacer(height=2)
+                dpg.add_text("Progress:")
+                dpg.add_progress_bar(tag=TAGS["autotune_progress"], default_value=0.0, width=-1, overlay="")
+
+                dpg.add_spacer(height=3)
+                dpg.add_text("Results:")
+                with dpg.group(horizontal=True):
+                    dpg.add_text("K (gain):", color=[150, 150, 150])
+                    dpg.add_text(tag=TAGS["autotune_k_display"], default_value="--")
+                with dpg.group(horizontal=True):
+                    dpg.add_text("L (delay):", color=[150, 150, 150])
+                    dpg.add_text(tag=TAGS["autotune_L_display"], default_value="--")
+                with dpg.group(horizontal=True):
+                    dpg.add_text("T (tau):", color=[150, 150, 150])
+                    dpg.add_text(tag=TAGS["autotune_T_display"], default_value="--")
+                dpg.add_text(tag=TAGS["autotune_results"], default_value="Kp=-- Ki=--", color=[100, 200, 255])
 
                 dpg.add_spacer(height=8)
 
