@@ -1,2 +1,0 @@
-# Load Sysbuild board Kconfig descriptions.
-osource "/home/wojtess/Documents/put/pico/project1/.zephyr/zephyr/boards/raspberrypi/rpi_pico/Kconfig.sysbuild"

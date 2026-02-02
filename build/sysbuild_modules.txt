@@ -1,1 +1,0 @@
-"mcuboot":"/home/wojtess/Documents/put/pico/project1/.zephyr/bootloader/mcuboot":"/home/wojtess/Documents/put/pico/project1/.zephyr/bootloader/mcuboot/boot/zephyr/sysbuild"

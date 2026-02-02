@@ -1,3 +1,0 @@
-/home/wojtess/Documents/put/pico/project1/build/bootloader/CMakeFiles/boot_stage2.dir
-/home/wojtess/Documents/put/pico/project1/build/bootloader/CMakeFiles/edit_cache.dir
-/home/wojtess/Documents/put/pico/project1/build/bootloader/CMakeFiles/rebuild_cache.dir

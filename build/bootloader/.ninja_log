@@ -1,7 +1,0 @@
-# ninja log v6
-2	25	1769805499190255499	CMakeFiles/boot_stage2.dir/home/wojtess/Documents/put/pico/project1/.zephyr/modules/hal/rpi_pico/src/rp2040/boot_stage2/boot2_w25q080.S.obj	288dab3ef73986fb
-25	97	1769805499278255842	boot_stage2	3c7ee1d032b2eaac
-25	97	1769805499278255842	boot_stage2.bin	3c7ee1d032b2eaac
-25	97	1769805499278255842	boot_stage2.S	3c7ee1d032b2eaac
-25	97	1769805499278255842	/home/wojtess/Documents/put/pico/project1/build/bootloader/boot_stage2.bin	3c7ee1d032b2eaac
-25	97	1769805499278255842	/home/wojtess/Documents/put/pico/project1/build/bootloader/boot_stage2.S	3c7ee1d032b2eaac
