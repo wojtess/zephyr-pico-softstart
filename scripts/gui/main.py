@@ -76,27 +76,27 @@ def main() -> int:
                 try:
                     # Update ADC History plot (when ADC streaming is active)
                     if app.is_streaming():
-                        x_axis, raw_series, volt_series = app.get_adc_history()
+                        x_axis, raw_series, amps_series = app.get_adc_history()
 
                         # Update ADC history plot
                         if dpg.does_item_exist(TAGS["adc_history_plot"]):
                             if dpg.does_item_exist(TAGS["adc_series_raw"]):
                                 dpg.set_value(TAGS["adc_series_raw"], [x_axis, raw_series])
-                            if dpg.does_item_exist(TAGS["adc_series_voltage"]):
-                                dpg.set_value(TAGS["adc_series_voltage"], [x_axis, volt_series])
+                            if dpg.does_item_exist(TAGS["adc_series_amps"]):
+                                dpg.set_value(TAGS["adc_series_amps"], [x_axis, amps_series])
 
                         # Update value displays with latest data
                         if raw_series:
                             latest_raw = raw_series[-1]
-                            latest_voltage = volt_series[-1]
+                            latest_amps = amps_series[-1]
                             if dpg.does_item_exist(TAGS["adc_value_raw"]):
                                 dpg.set_value(TAGS["adc_value_raw"], f"{latest_raw}")
-                            if dpg.does_item_exist(TAGS["adc_value_voltage"]):
-                                dpg.set_value(TAGS["adc_value_voltage"], f"{latest_voltage:.3f} V")
+                            if dpg.does_item_exist(TAGS["adc_value_amps"]):
+                                dpg.set_value(TAGS["adc_value_amps"], f"{latest_amps:.3f} A")
 
                     # Update P-Stream plot (when P-streaming is active)
                     if app.is_p_streaming():
-                        x_axis, raw_series, volt_series = app.get_p_stream_history()
+                        x_axis, raw_series, amps_series = app.get_p_stream_history()
                         setpoint_series = list(app._setpoint_history)
                         pwm_series = list(app._pwm_history)
                         error_series = list(app._error_history)
@@ -106,7 +106,7 @@ def main() -> int:
                             if dpg.does_item_exist(TAGS["p_series_setpoint"]):
                                 dpg.set_value(TAGS["p_series_setpoint"], [x_axis, setpoint_series])
                             if dpg.does_item_exist(TAGS["p_series_measured"]):
-                                dpg.set_value(TAGS["p_series_measured"], [x_axis, raw_series])
+                                dpg.set_value(TAGS["p_series_measured"], [x_axis, amps_series])
                             if dpg.does_item_exist(TAGS["p_series_pwm"]):
                                 dpg.set_value(TAGS["p_series_pwm"], [x_axis, pwm_series])
                             if dpg.does_item_exist(TAGS["p_series_error"]):

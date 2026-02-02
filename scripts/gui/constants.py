@@ -58,7 +58,7 @@ class SerialResult:
     led_state: Optional[bool] = None
     error: Optional[str] = None
     adc_value: Optional[int] = None  # Raw ADC value (0-4095)
-    adc_voltage: Optional[float] = None  # Voltage in V (0-3.3)
+    adc_amps: Optional[float] = None  # Current in A (0-1.0)
 
 
 # Tag constants for better resource management
@@ -79,9 +79,9 @@ TAGS = {
     "adc_auto_checkbox": "chk_adc_auto",
     "adc_history_plot": "plot_adc_history",
     "adc_value_raw": "txt_adc_raw",
-    "adc_value_voltage": "txt_adc_voltage",
+    "adc_value_amps": "txt_adc_amps",
     "adc_series_raw": "series_adc_raw",
-    "adc_series_voltage": "series_adc_voltage",
+    "adc_series_amps": "series_adc_amps",
     # Streaming tags
     "stream_interval_input": "input_stream_interval",
     "stream_start_btn": "btn_stream_start",

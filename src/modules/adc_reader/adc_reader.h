@@ -31,11 +31,18 @@ extern "C" {
 /** @brief Minimum ADC read interval (µs) - 10kHz for safety */
 #define ADC_READER_MIN_INTERVAL_US     10
 
-/** @brief Moving average filter window size (power of 2 for efficiency) */
-#define ADC_FILTER_WINDOW_SIZE  8
-
-/** @brief Moving average filter mask (for efficient modulo) */
-#define ADC_FILTER_MASK  (ADC_FILTER_WINDOW_SIZE - 1)
+/** @brief IIR LPF alpha coefficient (fixed-point: 1/256 for ~12Hz cutoff at 20kHz)
+ *
+ * @details α (alpha) determines filter response speed:
+ *          - Formula: y[n] = α·x[n] + (1-α)·y[n-1]
+ *          - Small α = strong filtering, slow response
+ *          - Large α = weak filtering, fast response
+ *          - Cutoff freq: fc = α × fs / (2π)
+ *          - For α=1/256, fs=20kHz: fc ≈ 12Hz
+ */
+#define ADC_IIR_ALPHA_NUMERATOR   1
+#define ADC_IIR_ALPHA_DENOMINATOR 256
+#define ADC_IIR_ALPHA_SHIFT       8  /* log2(256) for efficient fixed-point */
 
 /* =========================================================================
  * CONTEXT STRUCTURE
@@ -72,17 +79,8 @@ struct adc_reader_ctx {
 	/** Initialization flag */
 	bool initialized;
 
-	/** Moving average filter buffer (ring buffer) */
-	uint16_t filter_buffer[ADC_FILTER_WINDOW_SIZE];
-
-	/** Current index in filter buffer */
-	uint8_t filter_index;
-
-	/** Sum of values in filter buffer (for efficient average) */
-	uint32_t filter_sum;
-
-	/** Number of samples collected (for warm-up period) */
-	uint8_t filter_count;
+	/** IIR filter state (previous output y[n-1]) */
+	uint32_t filter_state;
 };
 
 /* =========================================================================
