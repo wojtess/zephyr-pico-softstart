@@ -66,6 +66,12 @@ struct oled_display_ctx {
     /** ADC reader reference (for ADC value) - volatile for thread safety */
     volatile struct adc_reader_ctx *adc_reader;
 
+    /** Actual font width (from CFB) */
+    uint8_t font_width;
+
+    /** Actual font height (from CFB) */
+    uint8_t font_height;
+
     /** Initialization flag */
     bool initialized;
 
