@@ -1,14 +1,21 @@
 /**
  * @file oled_display.h
- * @brief OLED display module for showing setpoint and ADC values
+ * @brief OLED display module for showing setpoint and measured current
  *
- * @details Displays current setpoint and measured ADC value on SSD1306 OLED.
+ * @details Displays current setpoint and measured current on SSD1306 OLED.
+ *          Converts ADC values to current (amperes) for human-readable display.
  *          Updates autonomously at 4 Hz (250ms interval) using timer + work queue.
  *          Uses Zephyr Character Framebuffer (CFB) for text rendering.
  *
- * Display layout (128x64, 8x8 font):
- *   Line 1: "SET: 4095" (setpoint value)
- *   Line 2: "ADC: 2048" (measured ADC value)
+ * Hardware constants for current calculation:
+ *   - Shunt resistor: 0.05 ohm
+ *   - Op-amp gain: 56.6x
+ *   - Vref: 3.3V
+ *   - Current range: 0-1.17A
+ *
+ * Display layout (128x64, Font 1: 15x24):
+ *   Line 1: "S:0.85A" (setpoint current)
+ *   Line 2: "M:0.42A" (measured current)
  */
 
 #ifndef OLED_DISPLAY_H

@@ -73,6 +73,13 @@ ADC_MAX_VALUE = 4095.0      # 12-bit ADC max value
 ADC_TO_AMPS = (ADC_VREF / ADC_MAX_VALUE) / AMPLIFIER_GAIN / SHUNT_RESISTOR_OHMS
 # ADC_TO_AMPS ≈ 0.000285 A per ADC count
 
+# Inverse: AMPS to ADC
+# adc = (I * gain * R_shunt * 4095) / 3.3
+def amps_to_adc(amps: float) -> int:
+    """Convert current in amperes to ADC value."""
+    adc = (amps * AMPLIFIER_GAIN * SHUNT_RESISTOR_OHMS * ADC_MAX_VALUE) / ADC_VREF
+    return max(0, min(int(adc), 4095))
+
 
 class LEDControllerApp:
     """Main LED Controller application with Dear PyGui GUI."""

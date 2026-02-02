@@ -426,22 +426,28 @@ def on_p_mode_changed(sender, app_data, user_data: LEDControllerApp) -> None:
 
 
 def on_p_setpoint_changed(sender, app_data, user_data: LEDControllerApp) -> None:
-    """Handle setpoint input/slider change."""
-    setpoint = app_data  # app_data contains the new setpoint value
-    logger.info(f"PI-Setpoint changed to {setpoint}")
+    """Handle setpoint input/slider change - value is in Amps, converts to ADC."""
+    from .app import amps_to_adc  # Import conversion function
+
+    setpoint_amps = app_data  # app_data contains the new setpoint in Amps
+    logger.info(f"PI-Setpoint changed to {setpoint_amps:.2f}A")
+
+    # Convert Amps to ADC for firmware
+    setpoint_adc = amps_to_adc(setpoint_amps)
+    logger.debug(f"Converted {setpoint_amps:.2f}A to ADC={setpoint_adc}")
 
     # Sync slider and input
     if sender == TAGS["p_setpoint_slider"]:
         # Slider changed - update input
         if dpg.does_item_exist(TAGS["p_setpoint_input"]):
-            dpg.set_value(TAGS["p_setpoint_input"], setpoint)
+            dpg.set_value(TAGS["p_setpoint_input"], setpoint_amps)
     elif sender == TAGS["p_setpoint_input"]:
         # Input changed - update slider
         if dpg.does_item_exist(TAGS["p_setpoint_slider"]):
-            dpg.set_value(TAGS["p_setpoint_slider"], setpoint)
+            dpg.set_value(TAGS["p_setpoint_slider"], setpoint_amps)
 
-    # Send command to device
-    task = SerialTask(command=SerialCommand.SET_P_SETPOINT, p_setpoint=setpoint)
+    # Send command to device with ADC value
+    task = SerialTask(command=SerialCommand.SET_P_SETPOINT, p_setpoint=setpoint_adc)
     result_queue = user_data.send_task(task)
 
     # Check result in background thread
@@ -450,8 +456,8 @@ def on_p_setpoint_changed(sender, app_data, user_data: LEDControllerApp) -> None
             result = result_queue.get(timeout=2)
 
             if result.success:
-                update_status(f"Setpoint set to {setpoint}", [100, 200, 100])
-                update_last_response(f"ACK: SP={setpoint}")
+                update_status(f"Setpoint set to {setpoint_amps:.2f}A", [100, 200, 100])
+                update_last_response(f"ACK: SP={setpoint_amps:.2f}A")
             else:
                 # Check if disconnected
                 if result.error == "Disconnected" or result.error == "Timeout":

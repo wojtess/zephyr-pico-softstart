@@ -17,7 +17,7 @@
  *   - CMD 0x02: SET PWM DUTY (0-100, 0%=OFF, 100%=full brightness)
  *   - CMD 0x03: READ ADC - Request ADC reading, response: [0x03][ADC_H][ADC_L][CRC8]
  *   - CMD 0x06: SET MODE (0=MANUAL, 1=AUTO)
- *   - CMD 0x07: SET P SETPOINT (H/L bytes, 0-4095)
+ *   - CMD 0x07: SET P SETPOINT (H/L bytes, 0-4095 ADC = 0-1.17A)
  *   - CMD 0x08: SET P GAIN (H/L bytes, 0-1000, represents 0.0-10.0)
  *   - CMD 0x09: START P STREAM (rate H/L in Hz)
  *   - CMD 0x0A: STOP P STREAM
@@ -578,7 +578,7 @@ int main(void)
 	printk("  0x02 <0-100> <crc> -> Set PWM duty (0=OFF, 100=full)\n");
 	printk("  0x03 <crc>        -> Read ADC (returns [0x03][ADC_H][ADC_L][CRC])\n");
 	printk("  0x06 <mode> <crc> -> Set mode (0=MANUAL, 1=AUTO)\n");
-	printk("  0x07 <H><L><crc>  -> Set setpoint (0-4095)\n");
+	printk("  0x07 <H><L><crc>  -> Set setpoint (0-4095 ADC = 0-1.17A)\n");
 	printk("  0x08 <H><L><crc>  -> Set gain (0-1000, Kp=0.0-10.0)\n");
 	printk("  0x0C <ff> <crc>   -> Set feed-forward (0-100)\n");
 	printk("  0x09 <H><L><crc>  -> Start P-stream (rate Hz)\n");

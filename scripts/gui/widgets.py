@@ -153,9 +153,9 @@ def create_main_window(app: LEDControllerApp) -> None:
                 dpg.add_text("--- P-CTRL ---", color=[150, 150, 180])
                 dpg.add_spacer(height=2)
 
-                dpg.add_text("Setpoint (0-4095):")
-                dpg.add_input_int(tag=TAGS["p_setpoint_input"], default_value=2000, min_value=0, max_value=4095, width=-1, callback=on_p_setpoint_changed, user_data=app)
-                dpg.add_slider_int(tag=TAGS["p_setpoint_slider"], default_value=2000, min_value=0, max_value=4095, clamped=True, width=-1, callback=on_p_setpoint_changed, user_data=app)
+                dpg.add_text("Setpoint (0-1.17A):")
+                dpg.add_input_float(tag=TAGS["p_setpoint_input"], default_value=0.50, min_value=0.0, max_value=1.17, width=-1, format="%.2f", callback=on_p_setpoint_changed, user_data=app)
+                dpg.add_slider_float(tag=TAGS["p_setpoint_slider"], default_value=0.50, min_value=0.0, max_value=1.17, clamped=True, width=-1, callback=on_p_setpoint_changed, user_data=app)
 
                 dpg.add_spacer(height=3)
 
