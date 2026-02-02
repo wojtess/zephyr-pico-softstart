@@ -3,10 +3,10 @@ Tests for hardware_config.py - ADC to current conversion.
 
 Hardware specs:
 - Shunt R: 0.05 ohm
-- Op-amp gain: 11x
+- Op-amp gain: 56.6x
 - Vref: 3.3V
 - ADC: 12-bit (0-4095)
-- Current range: 0-6A
+- Current range: 0-1.17A
 """
 
 import pytest
@@ -46,32 +46,32 @@ class TestBasicConversions:
         assert adc_to_current(0) == 0.0
 
     def test_adc_to_current_mid_scale(self):
-        """Mid-scale (2048) should give ~3.0A."""
+        """Mid-scale (2048) should give ~0.58A."""
         result = adc_to_current(2048)
-        expected = 3.0
+        expected = 0.58
         assert result == pytest.approx(expected, abs=ADC_CURRENT_TOLERANCE)
 
     def test_adc_to_current_full_scale(self):
-        """Full scale (4095) should give 6.0A."""
+        """Full scale (4095) should give ~1.17A."""
         result = adc_to_current(4095)
-        expected = 6.0
+        expected = 1.17
         assert result == pytest.approx(expected, abs=ADC_CURRENT_TOLERANCE)
 
     def test_adc_to_current_quarter_scale(self):
-        """Quarter scale (1024) should give ~1.5A."""
+        """Quarter scale (1024) should give ~0.29A."""
         result = adc_to_current(1024)
-        expected = 1.5
+        expected = 0.29
         assert result == pytest.approx(expected, abs=ADC_CURRENT_TOLERANCE)
 
     def test_adc_to_current_1_amp(self):
-        """ADC ~683 should give 1.0A."""
-        result = adc_to_current(683)
+        """ADC ~3509 should give 1.0A."""
+        result = adc_to_current(3509)
         assert result == pytest.approx(1.0, abs=ADC_CURRENT_TOLERANCE)
 
-    def test_adc_to_current_2_amp(self):
-        """ADC ~1366 should give 2.0A."""
-        result = adc_to_current(1366)
-        assert result == pytest.approx(2.0, abs=ADC_CURRENT_TOLERANCE)
+    def test_adc_to_current_0_5_amp(self):
+        """ADC ~1754 should give 0.5A."""
+        result = adc_to_current(1754)
+        assert result == pytest.approx(0.5, abs=ADC_CURRENT_TOLERANCE)
 
 
 # =============================================================================
@@ -83,7 +83,7 @@ class TestRoundtripAccuracy:
     """Test current -> ADC -> current conversion accuracy."""
 
     @pytest.mark.parametrize("current", [
-        0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0
+        0.0, 0.1, 0.2, 0.3, 0.5, 0.7, 0.8, 1.0, 1.1, 1.17
     ])
     def test_roundtrip_accuracy(self, current):
         """Roundtrip error should be < 1% for common currents."""
@@ -110,7 +110,7 @@ class TestPrecisionRequirement:
     def test_precision_at_percent_scale(self, pct):
         """Conversion error should be < 0.5% at 10% increments."""
         adc_raw = int(ADC_MAX * pct / 100)
-        expected_current = 6.0 * pct / 100
+        expected_current = 1.17 * pct / 100
         actual_current = adc_to_current(adc_raw)
 
         if expected_current > 0:
@@ -132,16 +132,16 @@ class TestEdgeCases:
         assert adc_to_current(0) == 0.0
 
     def test_adc_max(self):
-        """ADC maximum should give ~6A."""
-        assert adc_to_current(ADC_MAX) == pytest.approx(6.0, abs=ADC_CURRENT_TOLERANCE)
+        """ADC maximum should give ~1.17A."""
+        assert adc_to_current(ADC_MAX) == pytest.approx(1.17, abs=ADC_CURRENT_TOLERANCE)
 
     def test_current_zero_to_adc(self):
         """0A should give ADC 0."""
         assert current_to_adc(0.0) == 0
 
     def test_current_max_to_adc(self):
-        """6A should give ADC 4095."""
-        assert current_to_adc(6.0) == ADC_MAX
+        """1.17A should give ADC 4095."""
+        assert current_to_adc(1.17) == ADC_MAX
 
     def test_negative_current_raises_error(self):
         """Negative current should raise ValueError."""
@@ -158,10 +158,10 @@ class TestEdgeCases:
         with pytest.raises(ValueError, match="out of range"):
             adc_to_current(4096)
 
-    def test_current_above_6a_clamps(self):
-        """Current > 6A should clamp to ADC max."""
-        result = current_to_adc(7.0)
-        assert result == ADC_MAX, "Current >6A should clamp to ADC 4095"
+    def test_current_above_1_17a_clamps(self):
+        """Current > 1.17A should clamp to ADC max."""
+        result = current_to_adc(2.0)
+        assert result == ADC_MAX, "Current >1.17A should clamp to ADC 4095"
 
     def test_very_large_current_clamps(self):
         """Very large current should clamp gracefully."""
@@ -178,13 +178,14 @@ class TestPracticalValues:
     """Test commonly used current values in the application."""
 
     @pytest.mark.parametrize("current,expected_adc,tolerance", [
-        (0.5, 341, 2),
-        (1.0, 683, 2),
-        (2.0, 1365, 2),
-        (3.0, 2048, 2),
-        (4.0, 2730, 2),
-        (5.0, 3413, 2),
-        (6.0, 4095, 2),
+        (0.1, 350, 10),
+        (0.2, 701, 10),
+        (0.3, 1051, 10),
+        (0.5, 1752, 10),
+        (0.7, 2453, 10),
+        (0.8, 2803, 10),
+        (1.0, 3504, 10),
+        (1.17, 4095, 10),
     ])
     def test_current_to_adc_practical(self, current, expected_adc, tolerance):
         """Common currents should convert to expected ADC values."""
@@ -193,13 +194,14 @@ class TestPracticalValues:
             f"{current}A should give ADC ~{expected_adc}±{tolerance}, got {actual_adc}"
 
     @pytest.mark.parametrize("expected_current,adc,tolerance", [
-        (0.5, 341, ADC_CURRENT_TOLERANCE),
-        (1.0, 683, ADC_CURRENT_TOLERANCE),
-        (2.0, 1365, ADC_CURRENT_TOLERANCE),
-        (3.0, 2048, ADC_CURRENT_TOLERANCE),
-        (4.0, 2730, ADC_CURRENT_TOLERANCE),
-        (5.0, 3413, ADC_CURRENT_TOLERANCE),
-        (6.0, 4095, ADC_CURRENT_TOLERANCE),
+        (0.1, 350, ADC_CURRENT_TOLERANCE),
+        (0.2, 701, ADC_CURRENT_TOLERANCE),
+        (0.3, 1051, ADC_CURRENT_TOLERANCE),
+        (0.5, 1752, ADC_CURRENT_TOLERANCE),
+        (0.7, 2453, ADC_CURRENT_TOLERANCE),
+        (0.8, 2803, ADC_CURRENT_TOLERANCE),
+        (1.0, 3504, ADC_CURRENT_TOLERANCE),
+        (1.17, 4095, ADC_CURRENT_TOLERANCE),
     ])
     def test_adc_to_current_practical(self, expected_current, adc, tolerance):
         """Common ADC values should convert to expected currents."""
@@ -255,7 +257,7 @@ class TestFloatingPointPrecision:
 
     def test_one_percent_scale(self):
         """1% of full scale (60mA) should be measurable."""
-        one_percent = 0.06  # 60mA = 1% of 6A
+        one_percent = 0.0117  # ~11.7mA = 1% of 1.17A
         adc = current_to_adc(one_percent)
         recovered = adc_to_current(adc)
 
@@ -266,7 +268,7 @@ class TestFloatingPointPrecision:
 
     def test_fractional_currents(self):
         """Fractional currents should convert correctly."""
-        test_values = [0.1, 0.25, 0.75, 1.25, 2.5]
+        test_values = [0.1, 0.25, 0.5, 0.75, 1.0]
         for current in test_values:
             adc = current_to_adc(current)
             recovered = adc_to_current(adc)
@@ -287,16 +289,16 @@ class TestUtilityFunctions:
         assert get_adc_range() == (0, 4095)
 
     def test_get_current_range(self):
-        """Current range should be (0.0, 6.0)."""
-        assert get_current_range() == (0.0, 6.0)
+        """Current range should be (0.0, 1.17)."""
+        assert get_current_range() == (0.0, 1.17)
 
     def test_get_adc_resolution(self):
-        """ADC resolution should be ~1.47mA per LSB."""
+        """ADC resolution should be ~0.285mA per LSB."""
         resolution = get_adc_resolution()
-        expected = 6.0 / 4095  # ~0.001465
-        assert abs(resolution - expected) < 0.0001
-        assert resolution > 0.0014  # ~1.4mA
-        assert resolution < 0.0015  # ~1.5mA
+        expected = 1.17 / 4095  # ~0.0002856
+        assert abs(resolution - expected) < 0.00001
+        assert resolution > 0.00028  # ~0.28mA
+        assert resolution < 0.00029  # ~0.29mA
 
 
 # =============================================================================
@@ -320,8 +322,8 @@ class TestHardwareConstants:
         assert SHUNT_R == 0.05
 
     def test_opamp_gain(self):
-        """Op-amp gain should be 11x."""
-        assert OPAMP_GAIN == 11.0
+        """Op-amp gain should be 56.6x."""
+        assert OPAMP_GAIN == 56.6
 
 
 # =============================================================================
@@ -339,12 +341,12 @@ class TestProtocolIntegration:
 
         for adc in test_adc_values:
             current = adc_to_current(adc)
-            assert 0.0 <= current <= 6.0, f"ADC {adc} gave invalid current {current}A"
+            assert 0.0 <= current <= 1.17, f"ADC {adc} gave invalid current {current}A"
 
     def test_conversion_for_setpoints(self):
         """Common setpoint values should convert correctly."""
         # P-controller setpoints in amperes
-        setpoints_amps = [0.5, 1.0, 2.0, 3.0, 4.0, 5.0]
+        setpoints_amps = [0.1, 0.3, 0.5, 0.8, 1.0]
 
         for setpoint in setpoints_amps:
             adc = current_to_adc(setpoint)
@@ -402,7 +404,7 @@ class TestCriticalEdgeCases:
 
     def test_adc_to_current_with_infinity_setpoint(self):
         """Test handling of infinity in setpoint context."""
-        # The function clamps to 6.0, so infinity gives ADC_MAX
+        # The function clamps to 1.17, so infinity gives ADC_MAX
         result = current_to_adc(float('inf'))
         assert result == ADC_MAX, "Infinity should clamp to ADC max"
 
@@ -438,11 +440,11 @@ class TestCriticalEdgeCases:
         assert current == 0.0, "Zero current should roundtrip perfectly"
 
     def test_maximum_current_boundary(self):
-        """Test maximum current boundary (6A)."""
-        adc = current_to_adc(6.0)
-        assert adc == ADC_MAX, "6A should give max ADC value"
+        """Test maximum current boundary (~1.17A)."""
+        adc = current_to_adc(1.17)
+        assert adc == ADC_MAX, "1.17A should give max ADC value"
         current = adc_to_current(adc)
-        assert current == pytest.approx(6.0, abs=ADC_CURRENT_TOLERANCE)
+        assert current == pytest.approx(1.17, abs=ADC_CURRENT_TOLERANCE)
 
     def test_very_small_positive_current(self):
         """Test very small positive current values."""

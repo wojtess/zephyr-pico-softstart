@@ -64,14 +64,14 @@ logger = logging.getLogger(__name__)
 
 # Hardware constants for current measurement
 SHUNT_RESISTOR_OHMS = 0.05  # 0.05 ohm shunt resistor
-AMPLIFIER_GAIN = 11.0       # Amplifier gain
+AMPLIFIER_GAIN = 56.6       # Amplifier gain
 ADC_VREF = 3.3              # ADC reference voltage
 ADC_MAX_VALUE = 4095.0      # 12-bit ADC max value
 
 # Current calculation: I = V_adc / gain / R_shunt
 # where V_adc = (adc_raw / 4095.0) * 3.3
 ADC_TO_AMPS = (ADC_VREF / ADC_MAX_VALUE) / AMPLIFIER_GAIN / SHUNT_RESISTOR_OHMS
-# ADC_TO_AMPS ≈ 0.00146 A per ADC count
+# ADC_TO_AMPS ≈ 0.000285 A per ADC count
 
 
 class LEDControllerApp:
