@@ -83,6 +83,63 @@ static uint16_t apply_iir_lpf(struct adc_reader_ctx *ctx, uint16_t raw_value)
 	return (uint16_t)y_new;
 }
 
+/**
+ * @brief Perform oversampling and return averaged value
+ *
+ * @details Reads ADC multiple times and returns the average value.
+ *          Oversampling improves effective resolution:
+ *          - 16x  = +2 bits (12-bit -> 14-bit)
+ *          - 64x  = +3 bits (12-bit -> 15-bit)
+ *          Uses sum + shift for efficient averaging.
+ *
+ * @param ctx ADC reader context
+ * @return Averaged ADC value (0-4095), or 0 on error
+ */
+static uint16_t perform_oversample(struct adc_reader_ctx *ctx)
+{
+	uint32_t sum = 0;
+	int16_t sample_buffer;  /* Use int16_t for signed ADC reads */
+	int ret;
+
+	/* Setup ADC sequence for single channel */
+	struct adc_sequence sequence = {
+		.channels = BIT(ADC_CHANNEL_0),
+		.buffer = &sample_buffer,
+		.buffer_size = sizeof(sample_buffer),
+		.resolution = ADC_RESOLUTION,
+	};
+
+	/* Read ADC multiple times and accumulate */
+	for (int i = 0; i < ADC_OVERSAMPLE_COUNT; i++) {
+		/* Reset buffer before each read */
+		sample_buffer = 0;
+
+		ret = adc_read(ctx->adc_dev, &sequence);
+		if (ret == 0) {
+			sum += (uint16_t)sample_buffer;
+		}
+
+		/* Small delay between samples for ADC settling (~1µs)
+		 * This ensures samples are independent and ADC has time to settle */
+		k_busy_wait(1);
+	}
+
+	/* Average by shifting (divide by ADC_OVERSAMPLE_COUNT)
+	 * For power-of-2 counts: 8->>3, 16->>4, 32->>5, 64->>6 */
+#if (ADC_OVERSAMPLE_COUNT == 8)
+	return (uint16_t)(sum >> 3);
+#elif (ADC_OVERSAMPLE_COUNT == 16)
+	return (uint16_t)(sum >> 4);
+#elif (ADC_OVERSAMPLE_COUNT == 32)
+	return (uint16_t)(sum >> 5);
+#elif (ADC_OVERSAMPLE_COUNT == 64)
+	return (uint16_t)(sum >> 6);
+#else
+	/* Fallback for non-power-of-2 (slow division) */
+	return (uint16_t)(sum / ADC_OVERSAMPLE_COUNT);
+#endif
+}
+
 /* =========================================================================
  * FORWARD DECLARATIONS
  * ========================================================================= */
@@ -136,9 +193,7 @@ static void adc_reader_work_handler(struct k_work *work)
 	struct adc_reader_ctx *ctx =
 		CONTAINER_OF(work, struct adc_reader_ctx, work);
 
-	int ret;
-	uint16_t adc_value = 0;
-	int16_t sample_buffer;
+	uint16_t filtered_value = 0;
 
 	if (!ctx->adc_dev) {
 		return;
@@ -150,25 +205,45 @@ static void adc_reader_work_handler(struct k_work *work)
 		return;
 	}
 
-	/* Setup ADC sequence for single channel */
-	struct adc_sequence sequence = {
-		.channels = BIT(ADC_CHANNEL_0),
-		.buffer = &sample_buffer,
-		.buffer_size = sizeof(sample_buffer),
-		.resolution = ADC_RESOLUTION,  /* 12-bit (0-4095) */
-	};
+	/* Apply filtering based on current mode */
+	switch (ctx->filter_mode) {
+	case ADC_FILTER_MODE_IIR_ONLY:
+		/* Current behavior: single read + IIR */
+		{
+			int16_t sample_buffer;
+			struct adc_sequence sequence = {
+				.channels = BIT(ADC_CHANNEL_0),
+				.buffer = &sample_buffer,
+				.buffer_size = sizeof(sample_buffer),
+				.resolution = ADC_RESOLUTION,
+			};
+			int ret = adc_read(ctx->adc_dev, &sequence);
+			if (ret == 0) {
+				filtered_value = apply_iir_lpf(ctx, (uint16_t)sample_buffer);
+			} else {
+				/* ADC error - don't update shared value */
+				return;
+			}
+		}
+		break;
 
-	/* Read ADC */
-	ret = adc_read(ctx->adc_dev, &sequence);
-	if (ret != 0) {
-		/* ADC error - don't update shared value */
+	case ADC_FILTER_MODE_OVERSAMPLE_ONLY:
+		/* 16x oversampling, no IIR */
+		filtered_value = perform_oversample(ctx);
+		break;
+
+	case ADC_FILTER_MODE_OVERSAMPLE_IIR:
+		/* 16x oversampling + IIR */
+		{
+			uint16_t oversampled = perform_oversample(ctx);
+			filtered_value = apply_iir_lpf(ctx, oversampled);
+		}
+		break;
+
+	default:
+		printk("ERROR: Invalid filter mode %d\n", ctx->filter_mode);
 		return;
 	}
-
-	adc_value = (uint16_t)sample_buffer;
-
-	/* Apply IIR low-pass filter to remove PWM noise */
-	uint16_t filtered_value = apply_iir_lpf(ctx, adc_value);
 
 	/* Update shared value with FILTERED value (atomic write) */
 	atomic_set(&ctx->last_adc_value, filtered_value);
@@ -247,6 +322,9 @@ int adc_reader_init(struct adc_reader_ctx *ctx,
 	ctx->alpha_num = ADC_IIR_ALPHA_NUMERATOR;
 	ctx->alpha_den = ADC_IIR_ALPHA_DENOMINATOR;
 	ctx->alpha_shift = ADC_IIR_ALPHA_SHIFT;
+
+	/* Set default filter mode (IIR only - current behavior) */
+	ctx->filter_mode = ADC_FILTER_MODE_IIR_ONLY;
 
 	/* Initialize timer with user data */
 	k_timer_init(&ctx->timer, adc_reader_timer_expiry, NULL);
@@ -444,4 +522,53 @@ int adc_reader_set_alpha(struct adc_reader_ctx *ctx, uint8_t numerator, uint8_t 
 	adc_reader_reset_filter(ctx);
 
 	return 0;
+}
+
+/**
+ * @brief Set ADC filter mode
+ */
+int adc_reader_set_filter_mode(struct adc_reader_ctx *ctx, uint8_t mode)
+{
+	if (!ctx || !ctx->initialized) {
+		return -EINVAL;
+	}
+
+	/* Validate mode */
+	if (mode > ADC_FILTER_MODE_OVERSAMPLE_IIR) {
+		return -EINVAL;
+	}
+
+	bool was_active = ctx->active;
+
+	/* Stop if running (for clean transition) */
+	if (was_active) {
+		k_timer_stop(&ctx->timer);
+	}
+
+	/* Update mode */
+	ctx->filter_mode = mode;
+
+	/* NOTE: We do NOT reset filter state when switching modes!
+	 * This preserves the IIR filter state and prevents the "cold filter" problem
+	 * where output starts at 0 and takes time to converge. */
+
+	/* Restart if was running */
+	if (was_active) {
+		k_timer_start(&ctx->timer,
+			      K_USEC(ctx->interval_us),
+			      K_USEC(ctx->interval_us));
+	}
+
+	return 0;
+}
+
+/**
+ * @brief Get current ADC filter mode
+ */
+int adc_reader_get_filter_mode(struct adc_reader_ctx *ctx)
+{
+	if (!ctx || !ctx->initialized) {
+		return -1;
+	}
+	return (int)ctx->filter_mode;
 }

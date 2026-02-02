@@ -52,6 +52,7 @@ from protocol import (
     build_p_stream_start_frame,
     build_p_stream_stop_frame,
     build_set_filter_alpha_frame,
+    build_set_filter_mode_frame,
     parse_adc_response,
     parse_stream_data,
     parse_p_stream_data,
@@ -395,6 +396,9 @@ class LEDControllerApp:
 
                 elif task.command == SerialCommand.SET_FILTER_ALPHA:
                     result = self._handle_set_filter_alpha(task.filter_alpha_num, task.filter_alpha_den)
+
+                elif task.command == SerialCommand.SET_FILTER_MODE:
+                    result = self._handle_set_filter_mode(task.filter_mode)
 
                 # After handler completes, check for leftover bytes in response queue
                 # This detects command collisions, double responses, or other protocol errors
@@ -1596,6 +1600,72 @@ class LEDControllerApp:
 
         except Exception as e:
             logger.error(f"Unexpected error setting filter alpha: {e}", exc_info=True)
+            return SerialResult(cmd, False, "Unexpected error", error=str(e))
+
+    def _handle_set_filter_mode(self, mode: int) -> SerialResult:
+        """Handle set filter mode command in worker thread."""
+        cmd = SerialCommand.SET_FILTER_MODE
+        logger.info(f"SET_FILTER_MODE: mode={mode}")
+
+        try:
+            with self._lock:
+                if not self._serial_connection or not self._serial_connection.is_open:
+                    logger.warning("SET_FILTER_MODE: Not connected")
+                    return SerialResult(cmd, False, "Not connected", error="No connection")
+
+                # Validate mode range (0-2)
+                if mode not in [0, 1, 2]:
+                    logger.warning(f"SET_FILTER_MODE: Invalid mode {mode}")
+                    return SerialResult(cmd, False, "Invalid mode (0-2)", error="Invalid value")
+
+                # Build and send frame
+                frame = build_set_filter_mode_frame(mode)
+                logger.info(f"SET_FILTER_MODE: sending frame: {frame.hex()}")
+
+                self._serial_connection.write(frame)
+                self._serial_connection.flush()
+
+            # Read response from response queue: 1 byte (ACK/NACK)
+            try:
+                resp_type = self._response_queue.get(timeout=2.0)
+            except queue.Empty:
+                logger.error("SET_FILTER_MODE: No response from device (timeout)")
+                return SerialResult(cmd, False, "Device not responding (timeout)", error="Timeout")
+
+            # If NACK, read error code byte
+            err_code = 0
+            if resp_type == RESP_NACK:
+                try:
+                    err_code = self._response_queue.get(timeout=1.0)
+                except queue.Empty:
+                    logger.warning("SET_FILTER_MODE: NACK received but no error code")
+
+            logger.info(f"SET_FILTER_MODE: received response: type=0x{resp_type:02X}, err=0x{err_code:02X}")
+
+            mode_names = {0: "IIR Only", 1: "Oversample Only", 2: "Oversample+IIR"}
+            if resp_type == RESP_ACK:
+                logger.info(f"SET_FILTER_MODE: ACK - Filter mode set to {mode_names[mode]}")
+                return SerialResult(cmd, True, f"Filter mode set to {mode_names[mode]}")
+            else:  # RESP_NACK
+                error_name = get_error_name(err_code)
+                logger.warning(f"SET_FILTER_MODE: NACK - {error_name}")
+                return SerialResult(cmd, False, f"Set filter mode failed: {error_name}", error=error_name)
+
+        except serial.SerialException as e:
+            error_msg = str(e)
+            if "device disconnected" in error_msg.lower():
+                with self._lock:
+                    self._is_connected = False
+                    self._serial_connection = None
+                    self._led_state = False
+                logger.warning("Device disconnected during set filter mode")
+                return SerialResult(cmd, False, "Device disconnected", error="Disconnected")
+            else:
+                logger.error(f"Serial error: {e}")
+                return SerialResult(cmd, False, "Communication error", error=str(e))
+
+        except Exception as e:
+            logger.error(f"Unexpected error setting filter mode: {e}", exc_info=True)
             return SerialResult(cmd, False, "Unexpected error", error=str(e))
 
     # NOTE: Stream worker removed - only ONE thread can access serial!

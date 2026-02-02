@@ -29,6 +29,7 @@ from .callbacks import (
     on_p_record_enable_changed,
     on_adc_stream_enable_changed,
     on_filter_alpha_changed,
+    on_filter_mode_changed,
     on_autotune_start,
 )
 from .utils import find_ports_with_info, update_status
@@ -128,10 +129,23 @@ def create_main_window(app: LEDControllerApp) -> None:
                 dpg.add_checkbox(label="Enable", tag=TAGS["adc_stream_enable_chk"], default_value=False, callback=on_adc_stream_enable_changed, user_data=app)
 
                 dpg.add_spacer(height=3)
+                dpg.add_text("Filter Mode:")
+                dpg.add_combo(
+                    tag=TAGS["filter_mode_combo"],
+                    items=["IIR Only", "Oversample Only", "Oversample+IIR"],
+                    default_value="IIR Only",
+                    width=-1,
+                    callback=on_filter_mode_changed,
+                    user_data=app
+                )
+                dpg.add_text(tag=TAGS["filter_mode_label"], default_value="Mode: IIR Only", color=[100, 200, 255])
+
+                dpg.add_spacer(height=2)
                 dpg.add_text("Filter Alpha (α):")
                 dpg.add_slider_int(tag=TAGS["filter_alpha_input"], default_value=1, min_value=1, max_value=255, clamped=True, width=-1, callback=on_filter_alpha_changed, user_data=app)
                 dpg.add_text(tag=TAGS["filter_alpha_label"], default_value="α = 1/256 = 0.0039", color=[100, 200, 255])
                 dpg.add_text(tag=TAGS["filter_alpha_info"], default_value="fc ≈ 12Hz", color=[150, 150, 150])
+                dpg.add_text(tag=TAGS["filter_oversample_info"], default_value="Oversample: 64x (15-bit effective)", color=[150, 150, 150])
 
                 dpg.add_spacer(height=8)
 
@@ -302,6 +316,10 @@ def create_main_window(app: LEDControllerApp) -> None:
                     default_value="Last: None",
                     color=[180, 180, 180],
                 )
+
+    # Hide oversample info by default (IIR Only mode doesn't use oversampling)
+    if dpg.does_item_exist(TAGS["filter_oversample_info"]):
+        dpg.hide_item(TAGS["filter_oversample_info"])
 
     # Set as primary window
     dpg.set_primary_window(TAGS["primary_window"], True)

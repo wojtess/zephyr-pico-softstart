@@ -40,6 +40,7 @@ CMD_START_P_STREAM = 0x09  # Start PI-controller streaming
 CMD_STOP_P_STREAM = 0x0A  # Stop PI-controller streaming
 CMD_SET_FEED_FORWARD = 0x0C  # Set feed-forward PWM (0-100)
 CMD_SET_FILTER_ALPHA = 0x0E  # Set IIR filter alpha (numerator/denominator)
+CMD_SET_FILTER_MODE = 0x0F  # Set ADC filter mode (0=IIR, 1=OS, 2=OS+IIR)
 
 RESP_ACK = 0xFF
 RESP_NACK = 0xFE
@@ -463,6 +464,23 @@ def build_set_filter_alpha_frame(numerator: int, denominator: int) -> bytes:
     cmd_num_den = bytes([CMD_SET_FILTER_ALPHA, numerator, denominator])
     checksum = crc8(cmd_num_den)
     return cmd_num_den + bytes([checksum])
+
+
+def build_set_filter_mode_frame(mode: int) -> bytes:
+    """Build a set filter mode frame (3-byte frame)
+
+    Frame format: [CMD_SET_FILTER_MODE][MODE][CRC8]
+
+    Args:
+        mode: Filter mode (0=IIR only, 1=Oversample only, 2=Oversample+IIR)
+
+    Returns:
+        Complete 3-byte frame
+    """
+    if mode not in [0, 1, 2]:
+        raise ValueError(f"Invalid filter mode: {mode} (must be 0-2)")
+
+    return build_frame(CMD_SET_FILTER_MODE, mode)
 
 
 def parse_p_status_response(resp: bytes) -> Tuple[int, int, int, int]:
